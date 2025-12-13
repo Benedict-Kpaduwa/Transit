@@ -1,7 +1,6 @@
-// data/StationObject.ts
 export interface Station {
   name: string;
-  coords: [number, number]; // [longitude, latitude]
+  coords: [number, number];
   line: "Red" | "Blue";
   route: "201" | "202";
   shared?: boolean;
@@ -9,7 +8,6 @@ export interface Station {
 
 export const stationsData = {
   red: [
-    // Northwest Red Line (201)
     {
       name: "Tuscany",
       coords: [-114.24248, 51.16307],
@@ -59,7 +57,6 @@ export const stationsData = {
       route: "201",
     },
 
-    // 7th Avenue Transit Mall – Shared Free Fare Zone
     {
       name: "8 Street SW",
       coords: [-114.08108, 51.0462],
@@ -176,7 +173,6 @@ export const stationsData = {
   ],
 
   blue: [
-    // West Blue Line (202)
     {
       name: "69 Street",
       coords: [-114.18962, 51.03888],
@@ -208,7 +204,6 @@ export const stationsData = {
       route: "202",
     },
 
-    // 7th Avenue Transit Mall – Shared Free Fare Zone (Blue Line trains stop here too)
     {
       name: "8 Street SW",
       coords: [-114.08108, 51.0462],

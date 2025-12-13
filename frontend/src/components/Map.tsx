@@ -74,6 +74,7 @@ const Map = ({
               "fill-extrusion-opacity": 0.6,
             },
           },
+
           labelLayerId
         );
       }

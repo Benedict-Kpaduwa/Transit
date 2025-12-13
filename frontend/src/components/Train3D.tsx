@@ -6,7 +6,6 @@ import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import * as turf from "@turf/turf";
-import mapboxgl from "mapbox-gl";
 
 interface Train3DProps {
   map: mapboxgl.Map;
