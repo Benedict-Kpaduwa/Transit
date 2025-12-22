@@ -1,7 +1,13 @@
 from config import settings
-from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware 
 from models.geo import GeoJSONFeatureCollection
+from services.calgary_transit import (
+    generate_route_from_sorted_stations,
+)
+from services.calgary_transit import (
+    get_lrt_stations_sorted_geojson,
+)
 from services.calgary_transit import (
     get_lrt_routes_geojson,
     get_lrt_routes_new_api,
@@ -10,7 +16,7 @@ from services.calgary_transit import (
     get_stops_geojson,
 )
 
-app = FastAPI(title="Calgary Transit API", version="1.2.0")
+app = FastAPI(title="Calgary Transit API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,8 +31,19 @@ app.add_middleware(
 async def root():
     return {
         "message": "Calgary Transit API",
-        "version": "1.2.0",
+        "version": "2.0.0",
         "has_app_token": bool(settings.calgary_app_token),
+        "endpoints": {
+            "all_stops": "/stops",
+            "bus_routes": "/map/routes/{category}",
+            "lrt_stations": "/lrt/stations",
+            "lrt_stations_sorted": "/lrt/stations/sorted", 
+            "lrt_routes": "/lrt/routes",
+            "lrt_routes_generated": "/lrt/routes/generated",
+            "lrt_by_line": "/lrt/stations/by-line/{line}",
+            "lrt_sorted_by_line": "/lrt/stations/sorted/{line}",
+            "health": "/health",
+        },
     }
 
 
@@ -72,7 +89,7 @@ async def route(
 
 @app.get("/lrt/stations", response_model=GeoJSONFeatureCollection)
 async def lrt_stations():
-    """Get all LRT stations"""
+    """Get all LRT stations (UNSORTED - original order from API)"""
     try:
         return await get_lrt_stations_geojson()
     except Exception as e:
@@ -81,12 +98,73 @@ async def lrt_stations():
         )
 
 
+@app.get("/lrt/stations/sorted", response_model=GeoJSONFeatureCollection)
+async def lrt_stations_sorted():
+    """Get all LRT stations SORTED in proper route order"""
+    try:
+        return await get_lrt_stations_sorted_geojson()
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch sorted LRT stations: {str(e)}"
+        )
+
+
+@app.get("/lrt/stations/sorted/{line}", response_model=GeoJSONFeatureCollection)
+async def lrt_stations_sorted_by_line(line: str):
+    """Get LRT stations for a specific line, SORTED in proper route order"""
+    try:
+        if line.upper() not in ["RED", "BLUE"]:
+            raise HTTPException(status_code=400, detail="Line must be RED or BLUE")
+
+        return await get_lrt_stations_sorted_geojson(line.upper())
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch sorted stations: {str(e)}"
+        )
+
+
+@app.get("/lrt/stations/by-line/{line}", response_model=GeoJSONFeatureCollection)
+async def lrt_stations_by_line(line: str):
+    """Get LRT stations filtered by line (RED or BLUE) - UNSORTED"""
+    try:
+        all_stations = await get_lrt_stations_geojson()
+
+        if line.upper() == "RED":
+            route_filter = "201"
+        elif line.upper() == "BLUE":
+            route_filter = "202"
+        elif line.upper() in ["BOTH", "RED/BLUE", "201/202"]:
+            route_filter = "201/202"
+        else:
+            raise HTTPException(status_code=400, detail="Invalid line. Use RED or BLUE")
+
+        filtered_features = []
+        for feature in all_stations.features:
+            route = feature.properties.get("route", "")
+            if route_filter == "201/202":
+                if "201" in route or "202" in route:
+                    filtered_features.append(feature)
+            elif route == route_filter:
+                filtered_features.append(feature)
+
+        return GeoJSONFeatureCollection(features=filtered_features)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to filter stations: {str(e)}"
+        )
+
+
 @app.get("/lrt/routes", response_model=GeoJSONFeatureCollection)
 async def lrt_routes(
     line: str = None,
     use_new_api: bool = Query(False, description="Use the new API endpoint"),
 ):
-    """Get LRT route geometries"""
+    """Get LRT route geometries - tries pre-defined routes first, falls back to generated"""
     try:
         if use_new_api:
             if not settings.calgary_app_token:
@@ -105,13 +183,49 @@ async def lrt_routes(
         )
 
 
+@app.get("/lrt/routes/generated", response_model=GeoJSONFeatureCollection)
+async def lrt_routes_generated(
+    line: str = None,
+):
+    """Get LRT route geometries GENERATED from sorted stations (always sorted)"""
+    try:
+        return await generate_route_from_sorted_stations(line)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to generate LRT routes: {str(e)}"
+        )
+
+
 @app.get("/routes/categories")
 async def route_categories():
     """Get available route categories"""
     return {
         "bus_categories": ["REGULAR", "EXPRESS", "SCHOOL", "BRT"],
-        "lrt_lines": ["RED", "BLUE", "GREEN"],
-        "note": "For LRT new API, use use_new_api=true parameter",
+        "lrt_lines": ["RED", "BLUE"],
+        "note": "For sorted stations, use /lrt/stations/sorted endpoint",
+    }
+
+
+@app.get("/lrt/lines")
+async def lrt_lines():
+    """Get LRT line information"""
+    return {
+        "lines": [
+            {
+                "name": "RED",
+                "route_number": "201",
+                "description": "North-South Line: Tuscany to Somerset-Bridlewood",
+                "sorting": "Stations sorted North to South",
+                "endpoints": ["Tuscany Station", "Somerset-Bridlewood Station"],
+            },
+            {
+                "name": "BLUE",
+                "route_number": "202",
+                "description": "West-East Line: 69 Street SW to Saddletowne",
+                "sorting": "Stations sorted West to East",
+                "endpoints": ["69 Street SW Station", "Saddletowne Station"],
+            },
+        ]
     }
 
 
@@ -121,6 +235,10 @@ async def health_check():
     return {
         "status": "healthy",
         "app_token_configured": bool(settings.calgary_app_token),
+        "features": {
+            "station_sorting": "enabled",
+            "route_generation": "enabled",
+        },
     }
 
 
