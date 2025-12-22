@@ -79,6 +79,7 @@ def sort_stations_by_known_order(stations: List[Dict], line: str) -> List[Dict]:
         "1st Street SW",
         "Centre Street",
         "City Hall",
+        "Victoria Park/Stampede",
         "Erlton/Stampede",
         "39 Avenue",
         "Chinook",
