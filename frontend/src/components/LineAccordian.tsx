@@ -82,7 +82,6 @@ const LineAccordion = ({
         </div>
       </button>
 
-      {/* Accordion Content */}
       {isOpen && (
         <div className="mt-1 ml-7 border-l-2 border-zinc-800/50 pl-3">
           {stations.map((station, idx) => (
