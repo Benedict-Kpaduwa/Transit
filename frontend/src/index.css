@@ -118,3 +118,50 @@
     @apply bg-background text-foreground;
   }
 }
+
+
+/* Train Marker Styling */
+.train-marker {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s linear; /* Smooths out the bearing rotation */
+}
+
+.train-core {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px; /* Square-ish like a train car */
+  border: 2px solid white;
+  z-index: 2;
+}
+
+.red-train .train-core { background: #ef4444; box-shadow: 0 0 15px #ef4444; }
+.blue-train .train-core { background: #3b82f6; box-shadow: 0 0 15px #3b82f6; }
+
+.train-ping {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.5);
+  animation: train-pulse 2s infinite;
+}
+
+@keyframes train-pulse {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+/* Station Dot Styling */
+.station-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  border: 2px solid #000;
+}
+.station-dot:hover { transform: scale(1.5); transition: 0.2s; }

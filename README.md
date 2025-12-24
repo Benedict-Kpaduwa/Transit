@@ -44,7 +44,6 @@ A modern, interactive web application for tracking Calgary Transit's system in r
 - Next station predictions
 
 ### **Modern UI/UX**
-- Dark mode interface inspired by [Spots](https://spots.aksharbarot.com)
 - Collapsible sidebar with station lists
 - Accordion-grouped lines (shadcn/ui)
 - Responsive design for desktop and mobile
