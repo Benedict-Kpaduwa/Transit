@@ -27,6 +27,9 @@ const Map = ({
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const trainMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [followingTrain, setFollowingTrain] = useState<"Red" | "Blue" | null>(
+    null
+  );
 
   const mapboxToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
@@ -52,6 +55,7 @@ const Map = ({
       style: "mapbox://styles/mapbox/dark-v11",
       container: mapContainerRef.current,
       center: [-114.0708, 51.0447],
+      antialias: true,
       zoom: 11,
       pitch: 52,
     });
@@ -147,9 +151,61 @@ const Map = ({
     }
   }, [selectedStation]);
 
+  useEffect(() => {
+    if (!followingTrain || !mapRef.current) return;
+
+    const target =
+      followingTrain === "Red"
+        ? redTrain.trainPosition
+        : blueTrain.trainPosition;
+
+    if (target) {
+      // mapRef.current.easeTo({
+      //   center: [target.lng, target.lat],
+      //   duration: 100,
+      //   easing: (t) => t,
+      //   pitch: 60,
+      //   zoom: 15.5,
+      // });
+
+      mapRef.current.jumpTo({
+        center: [target.lng, target.lat],
+        bearing: target.bearing,
+        pitch: 60,
+        zoom: 15.5,
+      });
+    }
+  }, [redTrain.trainPosition, blueTrain.trainPosition, followingTrain]);
+
   return (
     <div className="flex-1 h-full relative bg-black">
       <div ref={mapContainerRef} className="w-full h-full" />
+      <div className="absolute bottom-32 left-8 flex flex-col gap-2">
+        <button
+          onClick={() =>
+            setFollowingTrain(followingTrain === "Red" ? null : "Red")
+          }
+          className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
+            followingTrain === "Red"
+              ? "bg-red-500 border-white"
+              : "bg-black/80 border-red-500 text-red-500"
+          }`}
+        >
+          {followingTrain === "Red" ? "STOP FOLLOWING" : "FOLLOW RED TRAIN"}
+        </button>
+        <button
+          onClick={() =>
+            setFollowingTrain(followingTrain === "Blue" ? null : "Blue")
+          }
+          className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
+            followingTrain === "Blue"
+              ? "bg-blue-500 border-white"
+              : "bg-black/80 border-blue-500 text-blue-500"
+          }`}
+        >
+          {followingTrain === "Blue" ? "STOP FOLLOWING" : "FOLLOW BLUE TRAIN"}
+        </button>
+      </div>
       <TrainControls redTrain={redTrain} blueTrain={blueTrain} />
 
       <button

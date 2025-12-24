@@ -21,6 +21,8 @@ export const useTrainSimulation = ({ routeLines, stations, lineColor, speed }: S
 
     const [isMoving, setIsMoving] = useState(true);
     const [progress, setProgress] = useState(0);
+    const [isWaiting, setIsWaiting] = useState(false);
+    const lastStationRef = useRef<string | null>(null);
 
     const fullLine = useRef<any>(null);
     const lineDistance = useRef<number>(0);
@@ -39,14 +41,29 @@ export const useTrainSimulation = ({ routeLines, stations, lineColor, speed }: S
         }
     }, [routeLines, lineColor]);
 
-    // 2. The Animation Loop
     useEffect(() => {
-        if (!isMoving || !fullLine.current) return;
+        if (!fullLine.current || !isMoving || isWaiting) return;
 
         let animationFrame: number;
         const animate = () => {
             setProgress((prev) => {
                 const nextProgress = prev + speed;
+                const currentPoint = turf.along(fullLine.current!, nextProgress);
+                const nearbyStation = stations.find(s =>
+                    turf.distance(currentPoint, s.coords) < 0.05
+                );
+
+                if (nearbyStation && lastStationRef.current !== nearbyStation.id) {
+                    setIsWaiting(true);
+                    lastStationRef.current = nearbyStation.id;
+
+                    setTimeout(() => {
+                        setIsWaiting(false);
+                    }, 5000);
+
+                    return prev;
+                }
+
                 return nextProgress > lineDistance.current ? 0 : nextProgress;
             });
             animationFrame = requestAnimationFrame(animate);
@@ -54,7 +71,7 @@ export const useTrainSimulation = ({ routeLines, stations, lineColor, speed }: S
 
         animationFrame = requestAnimationFrame(animate);
         return () => cancelAnimationFrame(animationFrame);
-    }, [isMoving, speed]);
+    }, [isMoving, speed, isWaiting, stations]);
 
     useEffect(() => {
         if (!fullLine.current) return;
