@@ -14,7 +14,6 @@ interface LineAccordionProps {
 
 const LineAccordion = ({
   lineName,
-  lineColor,
   route,
   stations,
   selectedStation,

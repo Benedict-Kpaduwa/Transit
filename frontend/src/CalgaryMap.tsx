@@ -113,7 +113,6 @@ const CalgaryMap = () => {
   if (error) {
     return (
       <div className="relative min-h-screen bg-gradient-to-br from-gray-900 to-black flex items-center justify-center p-6">
-        {/* Background elements */}
         <div className="absolute inset-0 overflow-hidden">
           <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-red-500/5 rounded-full blur-3xl"></div>
           <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl"></div>
