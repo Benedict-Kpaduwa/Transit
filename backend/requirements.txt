@@ -3,7 +3,7 @@ uvicorn[standard]==0.24.0
 httpx==0.25.1
 pydantic==2.5.0
 pydantic-settings==2.1.0
-python-multipart==0.0.6
+python-multipart==0.0.18
 python-dotenv==1.0.0 
 gtfs-realtime-bindings
 protobuf==4.24.3
