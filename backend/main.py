@@ -1,12 +1,21 @@
 from config import settings
+from typing import Optional
+from datetime import datetime
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware 
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.inmemory import InMemoryBackend
+from fastapi_cache.decorator import cache
 from models.geo import GeoJSONFeatureCollection
 from services.calgary_transit import (
     generate_route_from_sorted_stations,
 )
 from services.calgary_transit import (
     get_lrt_stations_sorted_geojson,
+    get_realtime_vehicle_positions_with_routes,
+    get_realtime_vehicle_positions,
+    get_realtime_trip_updates,
+    get_vehicles_geojson
 )
 from services.calgary_transit import (
     get_lrt_routes_geojson,
@@ -17,6 +26,9 @@ from services.calgary_transit import (
 )
 
 app = FastAPI(title="Calgary Transit API", version="2.0.0")
+@app.on_event("startup")
+async def startup():
+    FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,6 +57,62 @@ async def root():
             "health": "/health",
         },
     }
+
+@app.get("/vehicles")
+async def get_vehicles(
+    line: Optional[str] = Query(None, description="C-Train line: RED or BLUE"),
+    vehicle_type: Optional[str] = Query(None, description="Vehicle type: CTRAIN or BUS"),
+    route_category: Optional[str] = Query(None, description="Bus category: BRT, REGULAR, EXPRESS")
+):
+    """Get real-time vehicle positions with route information"""
+    try:
+        vehicles = await get_realtime_vehicle_positions_with_routes(
+            line=line,
+            vehicle_type=vehicle_type,
+            route_category=route_category
+        )
+        
+        return {
+            "total": len(vehicles),
+            "filters": {
+                "line": line.upper() if line else None,
+                "vehicle_type": vehicle_type.upper() if vehicle_type else "ALL",
+                "route_category": route_category.upper() if route_category else None
+            },
+            "vehicles": vehicles
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/vehicles/geojson")
+async def get_vehicles_geojson_endpoint(
+    line: Optional[str] = Query(None, description="RED or BLUE")
+):
+    """Get vehicle positions as GeoJSON"""
+    try:
+        return await get_vehicles_geojson(line)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/trips")
+async def get_trip_updates(
+    line: Optional[str] = Query(None, description="RED or BLUE")
+):
+    """Get real-time trip updates (arrival predictions)"""
+    try:
+        updates = await get_realtime_trip_updates()
+        
+        if line:
+            route_id = "201" if line.upper() == "RED" else "202"
+            updates = [u for u in updates if u.get('route_id') == route_id]
+        
+        return {
+            "total": len(updates),
+            "updates": updates
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/stops", response_model=GeoJSONFeatureCollection)

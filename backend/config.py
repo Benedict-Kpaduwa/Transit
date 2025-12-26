@@ -7,7 +7,6 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
 
-    # Calgary Open Data App Token (for new API endpoints)
     calgary_app_token: Optional[str] = None
 
     # API endpoints
