@@ -7,6 +7,8 @@
 venv/
 env/
 ENV/
+gtfs_data/
+gtfs_static.zip
 
 # Python
 __pycache__/

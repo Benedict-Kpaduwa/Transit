@@ -13,7 +13,6 @@ from services.calgary_transit import (
 from services.calgary_transit import (
     get_lrt_stations_sorted_geojson,
     get_realtime_vehicle_positions_with_routes,
-    get_realtime_vehicle_positions,
     get_realtime_trip_updates,
     get_vehicles_geojson
 )
