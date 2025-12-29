@@ -1,8 +1,7 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useMemo } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import { type Station } from "@/data/StationObject";
-import type { RouteLine } from "@/services/api";
+import type { Station, RouteLine } from "@/types";
 import { useTrainSimulation } from "@/hooks/useTrainSimulation";
 import TrainControls from "./TrainControls";
 import { Zap, X } from "lucide-react";
@@ -33,16 +32,26 @@ const Map = ({
 
   const mapboxToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
+  const redStations = useMemo(
+    () => stations.filter((s) => s.line === "Red"),
+    [stations]
+  );
+
+  const blueStations = useMemo(
+    () => stations.filter((s) => s.line === "Blue"),
+    [stations]
+  );
+
   const redTrain = useTrainSimulation({
     routeLines,
-    stations: stations.filter((s) => s.line === "Red"),
+    stations: redStations,
     lineColor: "Red",
     speed: 0.0008,
   });
 
   const blueTrain = useTrainSimulation({
     routeLines,
-    stations: stations.filter((s) => s.line === "Blue"),
+    stations: blueStations,
     lineColor: "Blue",
     speed: 0.0006,
   });
@@ -308,7 +317,8 @@ function setupMapLayers(map: mapboxgl.Map, routeLines: RouteLine[]) {
           source: id,
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-color": route.color === "Red" ? "#DC143C" : "#0088FF",
+            "line-color":
+              route.properties.line === "RED" ? "#DC143C" : "#0088FF",
             "line-width": 4,
             "line-opacity": 0.8,
           },
