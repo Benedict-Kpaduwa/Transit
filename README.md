@@ -61,7 +61,7 @@ A modern, interactive web application for tracking Calgary Transit's system in r
 ## Tech Stack
 
 ### **Frontend**
-- **Framework**: Next.js 14 (App Router)
+- **Framework**: React.js
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS
 - **Map**: Mapbox GL JS
