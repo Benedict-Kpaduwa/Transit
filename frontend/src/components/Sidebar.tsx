@@ -21,7 +21,7 @@ const Sidebar = ({
   onStationClick,
 }: SidebarProps) => {
   return (
-    <div className="w-[540px] h-full bg-[#171717] overflow-y-auto border-r border-zinc-800/50 flex-shrink-0">
+    <div className="w-[540px] h-full bg-[#171717] overflow-y-auto border-r border-zinc-800/50 shrink-0">
       <div className="px-6 py-6 border-b border-zinc-800/50">
         <div className="flex items-center gap-3 mb-1">
           <div className="w-7 h-7 bg-white rounded flex items-center justify-center">

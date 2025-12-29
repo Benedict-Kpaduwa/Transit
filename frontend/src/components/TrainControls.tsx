@@ -24,7 +24,7 @@ const TrainControls: React.FC<TrainControlsProps> = ({
   blueTrain,
 }) => (
   <div className="absolute bottom-24 right-6 z-10 space-y-3">
-    <div className="bg-gradient-to-r from-gray-800/90 to-gray-900/90 backdrop-blur-sm rounded-xl border border-gray-700/50 p-4 shadow-lg">
+    <div className="bg-linear-to-r from-gray-800/90 to-gray-900/90 backdrop-blur-sm rounded-xl border border-gray-700/50 p-4 shadow-lg">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
@@ -53,7 +53,7 @@ const TrainControls: React.FC<TrainControlsProps> = ({
       )}
     </div>
 
-    <div className="bg-gradient-to-r from-gray-800/90 to-gray-900/90 backdrop-blur-sm rounded-xl border border-gray-700/50 p-4 shadow-lg">
+    <div className="bg-linear-to-r from-gray-800/90 to-gray-900/90 backdrop-blur-sm rounded-xl border border-gray-700/50 p-4 shadow-lg">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></div>
