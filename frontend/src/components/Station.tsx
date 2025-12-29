@@ -1,4 +1,4 @@
-import type { Station } from "../data/StationObject";
+import type { Station } from "@/types";
 
 interface StationCardProps {
   station: Station;
@@ -43,7 +43,7 @@ const StationCard = ({ station, isSelected, onClick }: StationCardProps) => {
           </p>
         </div>
 
-        <div className="flex-shrink-0">
+        <div className="shrink-0">
           <span
             className={`text-xs font-medium ${getStatusColor(
               getStationStatus()

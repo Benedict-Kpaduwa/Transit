@@ -1,10 +1,8 @@
 import { stationApi } from "@/services/api";
 
-export type { Station } from "@/services/api";
-
 export const getStationsData = async () => {
   try {
-    const data = await stationApi.getAllStationsByLine();
+    const data = await stationApi.getAllStationsByLineSorted();
     return data;
   } catch (error) {
     console.error("Failed to fetch stations data:", error);

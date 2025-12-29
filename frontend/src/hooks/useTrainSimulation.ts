@@ -1,105 +1,152 @@
-import { useState, useEffect, useRef } from 'react';
-import * as turf from '@turf/turf';
-import { type Station } from "@/data/StationObject";
-import type { RouteLine } from "@/services/api";
+import { useState, useEffect, useRef, useCallback } from "react";
+import * as turf from "@turf/turf";
+import type { Station, RouteLine } from "@/types";
 
 interface SimulationProps {
-    routeLines: RouteLine[];
-    stations: Station[];
-    lineColor: string;
-    speed: number;
+  routeLines: RouteLine[];
+  stations: Station[];
+  lineColor: string;
+  speed: number;
 }
 
-export const useTrainSimulation = ({ routeLines, stations, lineColor, speed }: SimulationProps) => {
-    const [trainPosition, setTrainPosition] = useState<{
-        lng: number;
-        lat: number;
-        bearing: number;
-        currentStation?: Station;
-        nextStation?: Station;
-    } | null>(null);
+interface TrainPosition {
+  lng: number;
+  lat: number;
+  bearing: number;
+  currentStation?: Station;
+  nextStation?: Station;
+}
 
-    const [isMoving, setIsMoving] = useState(true);
-    const [progress, setProgress] = useState(0);
-    const [isWaiting, setIsWaiting] = useState(false);
-    const lastStationRef = useRef<string | null>(null);
+export const useTrainSimulation = ({
+  routeLines,
+  stations,
+  lineColor,
+  speed,
+}: SimulationProps) => {
+  // Only trainPosition is React state - this is what components render
+  const [trainPosition, setTrainPosition] = useState<TrainPosition | null>(
+    null
+  );
+  const [isMoving, setIsMoving] = useState(true);
 
-    const fullLine = useRef<any>(null);
-    const lineDistance = useRef<number>(0);
+  // ALL animation state is in refs - no re-renders during animation!
+  const progressRef = useRef(0);
+  const isWaitingRef = useRef(false);
+  const lastStationRef = useRef<string | null>(null);
+  const fullLineRef = useRef<ReturnType<typeof turf.lineString> | null>(null);
+  const lineDistanceRef = useRef(0);
+  const animationFrameRef = useRef<number | null>(null);
+  const stationsRef = useRef(stations);
+  const isMovingRef = useRef(isMoving);
+  const speedRef = useRef(speed);
 
-    useEffect(() => {
-        if (routeLines.length > 0) {
-            const relevantLines = routeLines.filter(l =>
-                l.properties.line.toLowerCase().includes(lineColor.toLowerCase())
-            );
+  // Keep refs in sync with props/state
+  useEffect(() => {
+    stationsRef.current = stations;
+  }, [stations]);
 
-            const coords = relevantLines.flatMap(line => line.coordinates);
-            if (coords.length > 1) {
-                fullLine.current = turf.lineString(coords);
-                lineDistance.current = turf.length(fullLine.current);
-            }
-        }
-    }, [routeLines, lineColor]);
+  useEffect(() => {
+    isMovingRef.current = isMoving;
+  }, [isMoving]);
 
-    useEffect(() => {
-        if (!fullLine.current || !isMoving || isWaiting) return;
+  useEffect(() => {
+    speedRef.current = speed;
+  }, [speed]);
 
-        let animationFrame: number;
-        const animate = () => {
-            setProgress((prev) => {
-                const nextProgress = prev + speed;
-                const currentPoint = turf.along(fullLine.current!, nextProgress);
-                const nearbyStation = stations.find(s =>
-                    turf.distance(currentPoint, s.coords) < 0.05
-                );
+  // Initialize the route line
+  useEffect(() => {
+    if (routeLines.length > 0) {
+      const relevantLines = routeLines.filter((l) =>
+        l.properties.line.toLowerCase().includes(lineColor.toLowerCase())
+      );
+      const coords = relevantLines.flatMap((line) => line.coordinates);
+      if (coords.length > 1) {
+        fullLineRef.current = turf.lineString(coords);
+        lineDistanceRef.current = turf.length(fullLineRef.current);
+      }
+    }
+  }, [routeLines, lineColor]);
 
-                if (nearbyStation && lastStationRef.current !== nearbyStation.id) {
-                    setIsWaiting(true);
-                    lastStationRef.current = nearbyStation.id;
+  // Single animation loop - updates refs and only calls ONE setState per frame
+  useEffect(() => {
+    const animate = () => {
+      // Check conditions using refs (no dependency on React state)
+      if (
+        !fullLineRef.current ||
+        !isMovingRef.current ||
+        isWaitingRef.current
+      ) {
+        animationFrameRef.current = requestAnimationFrame(animate);
+        return;
+      }
 
-                    setTimeout(() => {
-                        setIsWaiting(false);
-                    }, 5000);
+      // Update progress (ref, no re-render)
+      const nextProgress = progressRef.current + speedRef.current;
+      progressRef.current =
+        nextProgress > lineDistanceRef.current ? 0 : nextProgress;
 
-                    return prev;
-                }
+      // Calculate position
+      const currentPoint = turf.along(fullLineRef.current, progressRef.current);
+      const nextPoint = turf.along(
+        fullLineRef.current,
+        progressRef.current + 0.02
+      );
+      const bearing = turf.bearing(currentPoint, nextPoint);
+      const lng = currentPoint.geometry.coordinates[0];
+      const lat = currentPoint.geometry.coordinates[1];
 
-                return nextProgress > lineDistance.current ? 0 : nextProgress;
-            });
-            animationFrame = requestAnimationFrame(animate);
-        };
+      // Check for station stops
+      const nearbyStation = stationsRef.current.find(
+        (s) => turf.distance(currentPoint, s.coords) < 0.05
+      );
 
-        animationFrame = requestAnimationFrame(animate);
-        return () => cancelAnimationFrame(animationFrame);
-    }, [isMoving, speed, isWaiting, stations]);
+      if (nearbyStation && lastStationRef.current !== nearbyStation.name) {
+        isWaitingRef.current = true;
+        lastStationRef.current = nearbyStation.name;
+        setTimeout(() => {
+          isWaitingRef.current = false;
+        }, 3000); // 3 second stop at stations
+      }
 
-    useEffect(() => {
-        if (!fullLine.current) return;
+      // Find closest station for display
+      const closestStation =
+        stationsRef.current.length > 0
+          ? stationsRef.current.reduce((prev, curr) => {
+              const dist = turf.distance([lng, lat], curr.coords);
+              return dist < turf.distance([lng, lat], prev.coords)
+                ? curr
+                : prev;
+            }, stationsRef.current[0])
+          : undefined;
 
-        const currentPoint = turf.along(fullLine.current, progress);
-        const nextPoint = turf.along(fullLine.current, progress + 0.02);
-        const bearing = turf.bearing(currentPoint, nextPoint);
+      // ONLY state update - one per frame
+      setTrainPosition({
+        lng,
+        lat,
+        bearing,
+        currentStation: closestStation,
+        nextStation: closestStation,
+      });
 
-        const lng = currentPoint.geometry.coordinates[0];
-        const lat = currentPoint.geometry.coordinates[1];
-
-        const closestStation = stations.reduce((prev, curr) => {
-            const dist = turf.distance([lng, lat], curr.coords);
-            return (dist < turf.distance([lng, lat], prev.coords)) ? curr : prev;
-        }, stations[0]);
-
-        setTrainPosition({
-            lng,
-            lat,
-            bearing,
-            currentStation: closestStation,
-            nextStation: closestStation
-        });
-    }, [progress, stations]);
-
-    return {
-        trainPosition,
-        isMoving,
-        toggleMovement: () => setIsMoving(!isMoving)
+      animationFrameRef.current = requestAnimationFrame(animate);
     };
+
+    animationFrameRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []); // Empty deps - runs once, uses refs for everything
+
+  const toggleMovement = useCallback(() => {
+    setIsMoving((prev) => !prev);
+  }, []);
+
+  return {
+    trainPosition,
+    isMoving,
+    toggleMovement,
+  };
 };
