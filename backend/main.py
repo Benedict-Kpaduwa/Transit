@@ -12,9 +12,10 @@ from services.calgary_transit import (
 )
 from services.calgary_transit import (
     get_lrt_stations_sorted_geojson,
-    get_realtime_vehicle_positions_with_routes,
     get_realtime_trip_updates,
-    get_vehicles_geojson
+    get_vehicles_geojson,
+    get_realtime_ctrain_positions_with_routes,
+    get_realtime_bus_positions_with_routes
 )
 from services.calgary_transit import (
     get_lrt_routes_geojson,
@@ -57,39 +58,123 @@ async def root():
         },
     }
 
-@app.get("/vehicles")
-async def get_vehicles(
-    line: Optional[str] = Query(None, description="C-Train line: RED or BLUE"),
-    vehicle_type: Optional[str] = Query(None, description="Vehicle type: CTRAIN or BUS"),
-    route_category: Optional[str] = Query(None, description="Bus category: BRT, REGULAR, EXPRESS")
+# C-Train endpoints
+@app.get("/ctrains")
+async def get_ctrains(
+    line: Optional[str] = Query(None, description="C-Train line: RED or BLUE")
 ):
-    """Get real-time vehicle positions with route information"""
+    """Get real-time C-Train positions"""
     try:
-        vehicles = await get_realtime_vehicle_positions_with_routes(
-            line=line,
-            vehicle_type=vehicle_type,
-            route_category=route_category
-        )
+        ctrains = await get_realtime_ctrain_positions_with_routes(line=line)
         
         return {
-            "total": len(vehicles),
-            "filters": {
-                "line": line.upper() if line else None,
-                "vehicle_type": vehicle_type.upper() if vehicle_type else "ALL",
-                "route_category": route_category.upper() if route_category else None
-            },
-            "vehicles": vehicles
+            "total": len(ctrains),
+            "line": line.upper() if line else "ALL",
+            "ctrains": ctrains
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/vehicles/geojson")
-async def get_vehicles_geojson_endpoint(
-    line: Optional[str] = Query(None, description="RED or BLUE")
+
+@app.get("/ctrains/geojson")
+async def get_ctrains_geojson_endpoint(
+    line: Optional[str] = Query(None, description="C-Train line: RED or BLUE")
 ):
-    """Get vehicle positions as GeoJSON"""
+    """Get real-time C-Train positions as GeoJSON"""
     try:
-        return await get_vehicles_geojson(line)
+        ctrains = await get_realtime_ctrain_positions_with_routes(line=line)
+        
+        features = []
+        for ctrain in ctrains:
+            position = ctrain.get('position', {})
+            lat = position.get('latitude')
+            lon = position.get('longitude')
+            
+            if lat is not None and lon is not None:
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [lon, lat]
+                    },
+                    "properties": {
+                        "vehicle_id": ctrain.get('vehicle_id'),
+                        "route_id": ctrain.get('route_id'),
+                        "line": ctrain.get('line'),
+                        "trip_id": ctrain.get('trip_id'),
+                        "nearest_station": ctrain.get('nearest_station'),
+                        "distance_to_station": ctrain.get('distance_to_station'),
+                        "timestamp": ctrain.get('timestamp'),
+                        "type": "CTRAIN"
+                    }
+                })
+        
+        return {
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "count": len(features),
+                "line": line.upper() if line else "ALL",
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/buses")
+async def get_buses(
+    route_category: Optional[str] = Query(None, description="Bus category: BRT, REGULAR, EXPRESS"),
+    route_id: Optional[str] = Query(None, description="Specific route ID (e.g., 301, 1, 10)"),
+    debug: bool = Query(False, description="Show debug info for unmatched buses")
+):
+    """Get real-time bus positions with route information from static GTFS"""
+    try:
+        buses = await get_realtime_bus_positions_with_routes(
+            route_category=route_category,
+            route_id=route_id,
+            debug_unmatched=debug
+        )
+        
+        return {
+            "total": len(buses),
+            "filters": {
+                "route_category": route_category.upper() if route_category else None,
+                "route_id": route_id
+            },
+            "buses": buses
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/buses/geojson")
+async def get_buses_geojson_endpoint(
+    route_category: Optional[str] = Query(None, description="Bus category: BRT, REGULAR, EXPRESS"),
+    route_id: Optional[str] = Query(None, description="Specific route ID")
+):
+    """Get real-time bus positions as GeoJSON"""
+    try:
+        return await get_buses_geojson(
+            route_category=route_category,
+            route_id=route_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/vehicles")
+async def get_vehicles(
+    line: Optional[str] = Query(None, description="C-Train line: RED or BLUE (deprecated, use /ctrains)"),
+    vehicle_type: Optional[str] = Query(None, description="CTRAIN or BUS (deprecated, use /ctrains or /buses)")
+):
+    """
+    DEPRECATED: Use /ctrains or /buses instead
+    Get real-time vehicle positions
+    """
+    try:
+        if vehicle_type and vehicle_type.upper() == 'BUS':
+            return await get_buses(route_category=None, route_id=None)
+        else:
+            return await get_ctrains(line=line)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -95,20 +95,19 @@ def load_static_gtfs_data():
 
                 try:
                     route_num = int(route_short_name)
-                    if 300 <= route_num < 400:
-                        if route_num in [301, 302, 303, 304, 305, 306, 307]:
-                            category = 'BRT'
-                            max_lines = {
-                                301: 'MAX Orange',
-                                302: 'MAX Purple',
-                                303: 'MAX Yellow',
-                                305: 'MAX Teal',
-                                306: 'MAX Blue',
-                                307: 'MAX Green'
-                            }
-                            line = max_lines.get(route_num, f'MAX {route_short_name}')
-                        else:
-                            category = 'REGULAR'
+                    if route_num in [301, 302, 303, 305, 306, 307]:
+                        category = 'BRT'
+                        max_lines = {
+                            301: 'MAX Orange',
+                            302: 'MAX Purple',
+                            303: 'MAX Yellow',
+                            305: 'MAX Teal',
+                            306: 'MAX Blue',
+                            307: 'MAX Green'
+                        }
+                        line = max_lines.get(route_num, f'MAX {route_short_name}')
+                    elif 300 <= route_num < 400:
+                        category = 'REGULAR'
                     elif 400 <= route_num < 500:
                         category = 'EXPRESS'
                     else:
@@ -129,11 +128,13 @@ def load_static_gtfs_data():
         print(f"   • {len(trip_to_route)} trip_id -> route_id mappings")
         print(f"   • {len(route_info)} unique routes")
         
-        # Count by type
         ctrain_routes = [r for r, info in route_info.items() if info['vehicle_type'] == 'CTRAIN']
         bus_routes = [r for r, info in route_info.items() if info['vehicle_type'] == 'BUS']
+        brt_routes = [r for r, info in route_info.items() if info.get('category') == 'BRT']
+        
         print(f"   • C-Train routes: {len(ctrain_routes)}")
         print(f"   • Bus routes: {len(bus_routes)}")
+        print(f"   • BRT routes: {len(brt_routes)} → {[route_info[r]['route_short_name'] for r in brt_routes]}")
         
         return trip_to_route, route_info
         
@@ -293,18 +294,14 @@ async def get_realtime_vehicle_positions() -> List[Dict]:
         traceback.print_exc()
         return []
     
-async def get_realtime_vehicle_positions_with_routes(
-    line: Optional[str] = None,
-    vehicle_type: Optional[str] = None,
-    route_category: Optional[str] = None
+async def get_realtime_ctrain_positions_with_routes(
+    line: Optional[str] = None
 ) -> List[Dict]:
     """
-    Fetch vehicle positions and enrich with route info
+    Fetch C-Train vehicle positions and enrich with route info
     
     Args:
         line: Filter by C-Train line (RED/BLUE)
-        vehicle_type: Filter by vehicle type (CTRAIN/BUS)
-        route_category: Filter bus routes by category (BRT, REGULAR, EXPRESS)
     """
     try:
         vehicles, trip_updates, lrt_stations = await asyncio.gather(
@@ -315,112 +312,23 @@ async def get_realtime_vehicle_positions_with_routes(
         
         print(f"📋 Loaded {len(vehicles)} vehicles, {len(trip_updates)} trip updates")
 
-        print("\n" + "="*60)
-        print("🔍 DEBUG: Vehicle Data Analysis")
-        print("="*60)
-
-        vehicles_with_route = [v for v in vehicles if v.get('route_id')]
-        vehicles_without_route = [v for v in vehicles if not v.get('route_id')]
-        
-        print(f"\n📊 Route ID Analysis:")
-        print(f"   • Vehicles WITH route_id: {len(vehicles_with_route)}")
-        print(f"   • Vehicles WITHOUT route_id: {len(vehicles_without_route)}")
-        
-        if vehicles_with_route:
-            from collections import defaultdict
-            route_counts = defaultdict(int)
-            for v in vehicles_with_route:
-                route_counts[v['route_id']] += 1
-            
-            print(f"\n📈 Route ID Distribution (top 20):")
-            sorted_routes = sorted(route_counts.items(), key=lambda x: x[1], reverse=True)[:20]
-            for route_id, count in sorted_routes:
-                if route_id in ['201', '202']:
-                    type_label = "C-TRAIN"
-                elif route_id.isdigit():
-                    route_num = int(route_id)
-                    if 300 <= route_num < 400:
-                        type_label = "BRT BUS"
-                    elif 400 <= route_num < 500:
-                        type_label = "EXPRESS BUS"
-                    else:
-                        type_label = "REGULAR BUS"
-                else:
-                    type_label = "UNKNOWN"
-                print(f"   • {route_id}: {count} vehicles ({type_label})")
-
-        print(f"\n🔧 Vehicle Data Field Analysis:")
-        if vehicles:
-            sample_vehicle = vehicles[0]
-            print(f"   • Available keys: {list(sample_vehicle.keys())}")
-            print(f"   • Has 'trip_id': {'trip_id' in sample_vehicle}")
-            print(f"   • Has 'vehicle_id': {'vehicle_id' in sample_vehicle}")
-            print(f"   • Has 'position': {'position' in sample_vehicle}")
-            if 'position' in sample_vehicle:
-                print(f"   • Position keys: {list(sample_vehicle['position'].keys())}")
-
-        print(f"\n📋 Trip Updates Analysis:")
-        trip_updates_with_route = [t for t in trip_updates if t.get('route_id')]
-        print(f"   • Trip updates WITH route_id: {len(trip_updates_with_route)}/{len(trip_updates)}")
-        
-        if trip_updates_with_route:
-            unique_route_ids = set(str(t.get('route_id')) for t in trip_updates_with_route)
-            print(f"   • Unique route IDs in trip updates: {sorted(unique_route_ids)}")
-        
-        print("="*60 + "\n")
-
         trip_to_route = {}
-        route_info = {}
+        ctrain_route_info = {}
         
         for update in trip_updates:
             trip_id = update.get('trip_id')
             route_id = update.get('route_id')
             
-            if trip_id and route_id:
+            if trip_id and route_id and route_id in ['201', '202']:
                 trip_to_route[trip_id] = route_id
-
-                if route_id not in route_info:
-                    if route_id in ['201', '202']:
-                        route_info[route_id] = {
-                            'type': 'CTRAIN',
-                            'line': 'RED' if route_id == '201' else 'BLUE',
-                            'category': None
-                        }
-                    else:
-                        route_num = int(route_id) if route_id.isdigit() else 0
-
-                        if 300 <= route_num < 400:
-                            if route_num in [301, 302, 303, 304, 305, 306, 307]:
-                                category = 'BRT'
-                                # Determine MAX line color
-                                max_lines = {
-                                    301: 'MAX Orange',
-                                    302: 'MAX Purple', 
-                                    303: 'MAX Yellow',
-                                    305: 'MAX Teal',
-                                    306: 'MAX Blue',
-                                    307: 'MAX Green'
-                                }
-                                line_name = max_lines.get(route_num, f'MAX {route_id}')
-                            else:
-                                category = 'REGULAR'
-                                line_name = None
-                        elif 400 <= route_num < 500:
-                            category = 'EXPRESS'
-                            line_name = None
-                        else:
-                            category = 'REGULAR'
-                            line_name = None
-                        
-                        route_info[route_id] = {
-                            'type': 'BUS',
-                            'line': line_name,
-                            'category': category
-                        }
+                
+                if route_id not in ctrain_route_info:
+                    ctrain_route_info[route_id] = {
+                        'type': 'CTRAIN',
+                        'line': 'RED' if route_id == '201' else 'BLUE'
+                    }
         
-        print(f"📋 Built lookup tables:")
-        print(f"   • trip_id -> route_id: {len(trip_to_route)} mappings")
-        print(f"   • Unique routes in route_info: {len(route_info)}")
+        print(f"📋 C-Train route mappings: {len(trip_to_route)}")
 
         lrt_coords = []
         for feature in lrt_stations.features:
@@ -437,16 +345,11 @@ async def get_realtime_vehicle_positions_with_routes(
         def distance(lat1, lon1, lat2, lon2):
             return ((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) ** 0.5
 
-        enriched_vehicles = []
-        ctrain_count = 0
-        bus_count = 0
-        unmatched_count = 0
-        
+        ctrain_vehicles = []
         match_methods = {
             'direct_route_id': 0,
             'trip_update_match': 0,
-            'spatial_match': 0,
-            'unknown_bus': 0
+            'spatial_match': 0
         }
         
         for vehicle in vehicles:
@@ -459,98 +362,21 @@ async def get_realtime_vehicle_positions_with_routes(
                 continue
 
             route_id_from_vehicle = vehicle.get('route_id')
-            
-            if route_id_from_vehicle:
+            is_ctrain = False
+
+            if route_id_from_vehicle in ['201', '202']:
+                vehicle['vehicle_type'] = 'CTRAIN'
+                vehicle['line'] = 'RED' if route_id_from_vehicle == '201' else 'BLUE'
+                is_ctrain = True
                 match_methods['direct_route_id'] += 1
-
-                if route_id_from_vehicle in ['201', '202']:
-                    vehicle['vehicle_type'] = 'CTRAIN'
-                    vehicle['line'] = 'RED' if route_id_from_vehicle == '201' else 'BLUE'
-                    vehicle['category'] = None
-                    ctrain_count += 1
-                else:
-                    vehicle['vehicle_type'] = 'BUS'
-
-                    if route_id_from_vehicle in route_info:
-                        info = route_info[route_id_from_vehicle]
-                        vehicle['line'] = info.get('line')
-                        vehicle['category'] = info.get('category')
-                    else:
-                        try:
-                            route_num = int(route_id_from_vehicle)
-                            if 300 <= route_num < 400:
-                                if route_num in [301, 302, 303, 304, 305, 306, 307]:
-                                    vehicle['category'] = 'BRT'
-                                    max_lines = {
-                                        301: 'MAX Orange',
-                                        302: 'MAX Purple',
-                                        303: 'MAX Yellow',
-                                        305: 'MAX Teal',
-                                        306: 'MAX Blue',
-                                        307: 'MAX Green'
-                                    }
-                                    vehicle['line'] = max_lines.get(route_num, f'MAX {route_id_from_vehicle}')
-                                else:
-                                    vehicle['category'] = 'REGULAR'
-                                    vehicle['line'] = None
-                            elif 400 <= route_num < 500:
-                                vehicle['category'] = 'EXPRESS'
-                                vehicle['line'] = None
-                            else:
-                                vehicle['category'] = 'REGULAR'
-                                vehicle['line'] = None
-                        except ValueError:
-                            vehicle['category'] = 'REGULAR'
-                            vehicle['line'] = None
-                    
-                    bus_count += 1
-
-                if vehicle.get('vehicle_type') == 'CTRAIN':
-                    nearest_station = None
-                    min_distance = float('inf')
-                    
-                    for station in lrt_coords:
-                        dist = distance(v_lat, v_lon, station['lat'], station['lon'])
-                        if dist < min_distance:
-                            min_distance = dist
-                            nearest_station = station
-                    
-                    if nearest_station:
-                        vehicle['nearest_station'] = nearest_station['name']
-                        vehicle['distance_to_station'] = round(min_distance * 111000, 2)
 
             elif trip_id and trip_id in trip_to_route:
                 route_id = trip_to_route[trip_id]
                 vehicle['route_id'] = route_id
+                vehicle['vehicle_type'] = 'CTRAIN'
+                vehicle['line'] = 'RED' if route_id == '201' else 'BLUE'
+                is_ctrain = True
                 match_methods['trip_update_match'] += 1
-                
-                if route_id in route_info:
-                    info = route_info[route_id]
-                    vehicle['vehicle_type'] = info['type']
-                    vehicle['line'] = info['line']
-                    vehicle['category'] = info['category']
-                    
-                    if info['type'] == 'CTRAIN':
-                        ctrain_count += 1
-                        nearest_station = None
-                        min_distance = float('inf')
-                        
-                        for station in lrt_coords:
-                            dist = distance(v_lat, v_lon, station['lat'], station['lon'])
-                            if dist < min_distance:
-                                min_distance = dist
-                                nearest_station = station
-                        
-                        if nearest_station:
-                            vehicle['nearest_station'] = nearest_station['name']
-                            vehicle['distance_to_station'] = round(min_distance * 111000, 2)
-                    else:
-                        bus_count += 1
-                else:
-                    vehicle['vehicle_type'] = 'UNKNOWN'
-                    vehicle['line'] = None
-                    vehicle['category'] = None
-                    unmatched_count += 1
 
             else:
                 nearest_station = None
@@ -568,7 +394,6 @@ async def get_realtime_vehicle_positions_with_routes(
                     vehicle['vehicle_type'] = 'CTRAIN'
                     vehicle['nearest_station'] = nearest_station['name']
                     vehicle['distance_to_station'] = round(min_distance * 111000, 2)
-                    vehicle['category'] = None
                     
                     if route == '201':
                         vehicle['line'] = 'RED'
@@ -579,23 +404,28 @@ async def get_realtime_vehicle_positions_with_routes(
                     else:
                         vehicle['line'] = None
                     
-                    ctrain_count += 1
+                    is_ctrain = True
                     match_methods['spatial_match'] += 1
-                else:
-                    vehicle['route_id'] = None
-                    vehicle['vehicle_type'] = 'BUS'
-                    vehicle['line'] = None
-                    vehicle['category'] = None
-                    unmatched_count += 1
-                    match_methods['unknown_bus'] += 1
             
-            enriched_vehicles.append(vehicle)
+            if is_ctrain:
+                if 'nearest_station' not in vehicle:
+                    nearest_station = None
+                    min_distance = float('inf')
+                    
+                    for station in lrt_coords:
+                        dist = distance(v_lat, v_lon, station['lat'], station['lon'])
+                        if dist < min_distance:
+                            min_distance = dist
+                            nearest_station = station
+                    
+                    if nearest_station:
+                        vehicle['nearest_station'] = nearest_station['name']
+                        vehicle['distance_to_station'] = round(min_distance * 111000, 2)
+                
+                ctrain_vehicles.append(vehicle)
 
-        print(f"\n✅ Enrichment Statistics:")
-        print(f"   • Total vehicles enriched: {len(enriched_vehicles)}")
-        print(f"   • C-Trains identified: {ctrain_count}")
-        print(f"   • Buses identified: {bus_count}")
-        print(f"   • Unmatched vehicles: {unmatched_count}")
+        print(f"\n✅ C-Train Identification Complete:")
+        print(f"   • Total C-Trains found: {len(ctrain_vehicles)}")
         
         print(f"\n🔍 Matching Methods Used:")
         for method, count in match_methods.items():
@@ -603,52 +433,345 @@ async def get_realtime_vehicle_positions_with_routes(
                 method_name = method.replace('_', ' ').title()
                 print(f"   • {method_name}: {count} vehicles")
 
-        filtered_vehicles = enriched_vehicles
-
-        if vehicle_type:
-            vehicle_type_upper = vehicle_type.upper()
-            if vehicle_type_upper == 'CTRAIN':
-                filtered_vehicles = [v for v in filtered_vehicles if v.get('vehicle_type') == 'CTRAIN']
-                print(f"   • Filtered for C-TRAIN: {len(filtered_vehicles)} vehicles")
-            elif vehicle_type_upper == 'BUS':
-                filtered_vehicles = [v for v in filtered_vehicles if v.get('vehicle_type') == 'BUS']
-                print(f"   • Filtered for BUS: {len(filtered_vehicles)} vehicles")
-
         if line and line.upper() in ['RED', 'BLUE']:
             target_route = '201' if line.upper() == 'RED' else '202'
-            filtered_vehicles = [
-                v for v in filtered_vehicles 
-                if (v.get('vehicle_type') == 'CTRAIN' and 
-                    (v.get('route_id') == target_route or v.get('route_id') in ['201/202', '202/201']))
+            ctrain_vehicles = [
+                v for v in ctrain_vehicles 
+                if (v.get('route_id') == target_route or 
+                    v.get('route_id') in ['201/202', '202/201'])
             ]
-            print(f"   • Filtered for {line.upper()} line: {len(filtered_vehicles)} vehicles")
-
-        if route_category:
-            category_upper = route_category.upper()
-            filtered_vehicles = [
-                v for v in filtered_vehicles
-                if v.get('vehicle_type') == 'BUS' and v.get('category') == category_upper
-            ]
-            print(f"   • Filtered for {category_upper} buses: {len(filtered_vehicles)} vehicles")
+            print(f"\n   • Filtered for {line.upper()} line: {len(ctrain_vehicles)} vehicles")
         
-        print(f"\n✅ Returning {len(filtered_vehicles)} vehicles after filtering")
-
-        if filtered_vehicles and len(filtered_vehicles) <= 10:
-            print(f"\n📋 Filtered Results:")
-            for i, vehicle in enumerate(filtered_vehicles):
-                route_id = vehicle.get('route_id', 'N/A')
-                vehicle_type = vehicle.get('vehicle_type', 'N/A')
-                line = vehicle.get('line', 'N/A')
-                category = vehicle.get('category', 'N/A')
-                print(f"   [{i}] Route: {route_id}, Type: {vehicle_type}, Line: {line}, Category: {category}")
+        print(f"\n✅ Returning {len(ctrain_vehicles)} C-Trains")
         
-        return filtered_vehicles
+        return ctrain_vehicles
         
     except Exception as e:
-        print(f"❌ Error enriching vehicle positions: {str(e)}")
+        print(f"❌ Error getting C-Train positions: {str(e)}")
         import traceback
         traceback.print_exc()
         return []
+
+async def get_realtime_bus_positions_with_routes(
+    route_category: Optional[str] = None,
+    route_id: Optional[str] = None,
+    debug_unmatched: bool = False  # Add this parameter
+) -> List[Dict]:
+    """
+    Fetch bus vehicle positions and enrich with route info using static GTFS
+    
+    Args:
+        route_category: Filter by category (BRT, REGULAR, EXPRESS)
+        route_id: Filter by specific route ID (e.g., "301", "1", "10")
+        debug_unmatched: Print detailed info about unmatched buses
+    """
+    try:
+        # Ensure static GTFS data is downloaded
+        await download_static_gtfs()
+        
+        # Load static GTFS data
+        trip_to_route_static, route_info_static = load_static_gtfs_data()
+        
+        # Fetch vehicle positions
+        vehicles = await get_realtime_vehicle_positions()
+        
+        print(f"📋 Processing {len(vehicles)} vehicles for bus identification")
+        print(f"📊 Static GTFS: {len(trip_to_route_static)} trip mappings, {len(route_info_static)} routes")
+        
+        # Get LRT station coordinates for filtering out C-Trains
+        lrt_stations = await get_lrt_stations_sorted_geojson(None)
+        lrt_coords = []
+        for feature in lrt_stations.features:
+            if feature.geometry.type == "Point":
+                lon, lat = feature.geometry.coordinates
+                lrt_coords.append({'lat': lat, 'lon': lon})
+        
+        def distance(lat1, lon1, lat2, lon2):
+            return ((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) ** 0.5
+        
+        def is_near_lrt_station(lat, lon):
+            """Check if position is near any LRT station"""
+            for station in lrt_coords:
+                if distance(lat, lon, station['lat'], station['lon']) < 0.006:
+                    return True
+            return False
+        
+        def classify_bus_route(route_id_str, route_info=None):
+            """
+            Classify bus route and determine if it's BRT
+            Returns: (category, line_name)
+            """
+            # If we have route info from static GTFS, use it first
+            if route_info:
+                category = route_info.get('category')
+                line = route_info.get('line')
+                
+                # But override if we detect it's a MAX route
+                try:
+                    route_num = int(route_id_str)
+                    if route_num in [301, 302, 303, 305, 306, 307]:
+                        category = 'BRT'
+                        max_lines = {
+                            301: 'MAX Orange',
+                            302: 'MAX Purple',
+                            303: 'MAX Yellow',
+                            305: 'MAX Teal',
+                            306: 'MAX Blue',
+                            307: 'MAX Green'
+                        }
+                        line = max_lines.get(route_num)
+                except ValueError:
+                    pass
+                
+                return category, line
+            
+            # Fallback: classify based on route number
+            try:
+                route_num = int(route_id_str)
+                
+                # MAX BRT routes
+                if route_num in [301, 302, 303, 305, 306, 307]:
+                    max_lines = {
+                        301: 'MAX Orange',
+                        302: 'MAX Purple',
+                        303: 'MAX Yellow',
+                        305: 'MAX Teal',
+                        306: 'MAX Blue',
+                        307: 'MAX Green'
+                    }
+                    return 'BRT', max_lines.get(route_num, f'MAX {route_id_str}')
+                
+                # Other 300-series might be regular routes
+                elif 300 <= route_num < 400:
+                    return 'REGULAR', None
+                
+                # Express routes
+                elif 400 <= route_num < 500:
+                    return 'EXPRESS', None
+                
+                # Regular routes
+                else:
+                    return 'REGULAR', None
+                    
+            except ValueError:
+                return 'REGULAR', None
+        
+        bus_vehicles = []
+        matched_count = 0
+        unmatched_count = 0
+        filtered_ctrain_count = 0
+        unmatched_buses = []  # Store unmatched for debugging
+        
+        category_counts = {'BRT': 0, 'REGULAR': 0, 'EXPRESS': 0}
+        
+        for vehicle in vehicles:
+            position = vehicle.get('position', {})
+            v_lat = position.get('latitude')
+            v_lon = position.get('longitude')
+            trip_id = vehicle.get('trip_id')
+            vehicle_id = vehicle.get('vehicle_id')
+            
+            if v_lat is None or v_lon is None:
+                continue
+            
+            # Skip if near LRT station (likely C-Train)
+            if is_near_lrt_station(v_lat, v_lon):
+                filtered_ctrain_count += 1
+                continue
+            
+            # Skip if route_id indicates C-Train
+            vehicle_route_id = vehicle.get('route_id')
+            if vehicle_route_id in ['201', '202']:
+                filtered_ctrain_count += 1
+                continue
+            
+            # Try to match using static GTFS
+            if trip_id and trip_id in trip_to_route_static:
+                route_id_from_gtfs = trip_to_route_static[trip_id]
+                
+                # Skip C-Train routes
+                if route_id_from_gtfs in ['201', '202']:
+                    filtered_ctrain_count += 1
+                    continue
+                
+                vehicle['route_id'] = route_id_from_gtfs
+                
+                # Get route info from static GTFS
+                route_info = route_info_static.get(route_id_from_gtfs)
+                
+                # Classify the route (with override for MAX routes)
+                category, line = classify_bus_route(route_id_from_gtfs, route_info)
+                
+                vehicle['vehicle_type'] = 'BUS'
+                vehicle['category'] = category
+                vehicle['line'] = line
+                
+                if route_info:
+                    vehicle['route_short_name'] = route_info.get('route_short_name', route_id_from_gtfs)
+                    vehicle['route_long_name'] = route_info.get('route_long_name')
+                else:
+                    vehicle['route_short_name'] = route_id_from_gtfs
+                    vehicle['route_long_name'] = None
+                
+                matched_count += 1
+                category_counts[category] = category_counts.get(category, 0) + 1
+                bus_vehicles.append(vehicle)
+                
+            else:
+                # No match in static GTFS - include as unknown bus
+                vehicle['route_id'] = None
+                vehicle['vehicle_type'] = 'BUS'
+                vehicle['line'] = None
+                vehicle['category'] = None
+                vehicle['route_short_name'] = None
+                vehicle['route_long_name'] = None
+                unmatched_count += 1
+                
+                # Store for debugging
+                unmatched_buses.append({
+                    'vehicle_id': vehicle_id,
+                    'trip_id': trip_id,
+                    'position': {'lat': v_lat, 'lon': v_lon},
+                    'timestamp': vehicle.get('timestamp'),
+                    'entity_id': vehicle.get('id')
+                })
+                
+                bus_vehicles.append(vehicle)
+        
+        print(f"\n✅ Bus identification complete:")
+        print(f"   • Total vehicles processed: {len(vehicles)}")
+        print(f"   • Filtered C-Trains: {filtered_ctrain_count}")
+        print(f"   • Buses matched with route info: {matched_count}")
+        print(f"   • Buses without route info: {unmatched_count}")
+        print(f"   • Total buses: {len(bus_vehicles)}")
+        
+        print(f"\n📊 Buses by category:")
+        for cat, count in category_counts.items():
+            if count > 0:
+                print(f"   • {cat}: {count} buses")
+        
+        # DEBUG: Print unmatched buses
+        if debug_unmatched and unmatched_buses:
+            print(f"\n" + "="*80)
+            print(f"🔍 DEBUG: UNMATCHED BUSES ({len(unmatched_buses)} total)")
+            print("="*80)
+            
+            for i, bus in enumerate(unmatched_buses[:20]):  # Show first 20
+                print(f"\n[{i+1}] Unmatched Bus:")
+                print(f"    • Vehicle ID: {bus['vehicle_id']}")
+                print(f"    • Trip ID: {bus['trip_id']}")
+                print(f"    • Entity ID: {bus['entity_id']}")
+                print(f"    • Position: ({bus['position']['lat']:.6f}, {bus['position']['lon']:.6f})")
+                print(f"    • Timestamp: {bus['timestamp']}")
+                
+                # Check if trip_id exists in GTFS at all
+                if bus['trip_id']:
+                    if bus['trip_id'] in trip_to_route_static:
+                        print(f"    ⚠️  FOUND IN GTFS! Route: {trip_to_route_static[bus['trip_id']]}")
+                    else:
+                        print(f"    ❌ Not in GTFS static data")
+                        # Check if similar trip IDs exist
+                        trip_prefix = bus['trip_id'][:6] if len(bus['trip_id']) > 6 else bus['trip_id'][:3]
+                        similar = [t for t in list(trip_to_route_static.keys())[:100] if t.startswith(trip_prefix)]
+                        if similar:
+                            print(f"    🔍 Similar trip IDs: {similar[:5]}")
+            
+            if len(unmatched_buses) > 20:
+                print(f"\n... and {len(unmatched_buses) - 20} more unmatched buses")
+            
+            print("="*80 + "\n")
+        
+        # Apply filters
+        filtered_buses = bus_vehicles
+        
+        # Filter by specific route ID
+        if route_id:
+            filtered_buses = [b for b in filtered_buses if b.get('route_id') == route_id]
+            print(f"\n   • Filtered for route {route_id}: {len(filtered_buses)} buses")
+        
+        # Filter by category
+        if route_category:
+            category_upper = route_category.upper()
+            before_count = len(filtered_buses)
+            filtered_buses = [
+                b for b in filtered_buses 
+                if b.get('category') == category_upper
+            ]
+            print(f"\n   • Filtered for {category_upper} category: {len(filtered_buses)} buses (from {before_count})")
+            
+            # Debug: Show what we found
+            if len(filtered_buses) > 0:
+                unique_routes = set(b.get('route_short_name') for b in filtered_buses if b.get('route_short_name'))
+                print(f"   • Routes in {category_upper}: {sorted(unique_routes)}")
+        
+        print(f"\n✅ Returning {len(filtered_buses)} buses")
+        
+        # Show sample results
+        if filtered_buses and len(filtered_buses) <= 10:
+            print(f"\n📋 Sample results:")
+            for i, bus in enumerate(filtered_buses[:10]):
+                route = bus.get('route_short_name', 'Unknown')
+                category = bus.get('category', 'N/A')
+                line = bus.get('line', 'N/A')
+                print(f"   [{i}] Route: {route}, Category: {category}, Line: {line}")
+        
+        return filtered_buses
+        
+    except Exception as e:
+        print(f"❌ Error getting bus positions: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+async def get_buses_geojson(
+    route_category: Optional[str] = None,
+    route_id: Optional[str] = None
+) -> Dict:
+    """
+    Get bus positions as GeoJSON
+    """
+    buses = await get_realtime_bus_positions_with_routes(
+        route_category=route_category,
+        route_id=route_id
+    )
+    
+    features = []
+    for bus in buses:
+        position = bus.get('position', {})
+        lat = position.get('latitude')
+        lon = position.get('longitude')
+        
+        if lat is not None and lon is not None:
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [lon, lat]
+                },
+                "properties": {
+                    "vehicle_id": bus.get('vehicle_id'),
+                    "route_id": bus.get('route_id'),
+                    "route_short_name": bus.get('route_short_name'),
+                    "route_long_name": bus.get('route_long_name'),
+                    "line": bus.get('line'),
+                    "category": bus.get('category'),
+                    "trip_id": bus.get('trip_id'),
+                    "timestamp": bus.get('timestamp'),
+                    "type": "BUS"
+                }
+            })
+    
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "metadata": {
+            "count": len(features),
+            "route_category": route_category,
+            "route_id": route_id,
+            "timestamp": datetime.now().isoformat()
+        }
+    }
 
 
 async def get_vehicles_geojson(line: Optional[str] = None) -> Dict:
@@ -1029,7 +1152,6 @@ async def generate_route_from_sorted_stations(
 ) -> GeoJSONFeatureCollection:
     """Generate route line from sorted stations"""
     try:
-        # Get sorted stations
         stations_data = await get_lrt_stations_sorted_geojson(line)
 
         if not stations_data.features:
