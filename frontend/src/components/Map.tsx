@@ -9,6 +9,7 @@ import { MapContext } from "@/context/map-context";
 import MapSearch from "@/components/map/map-search";
 import MapStyles from "@/components/map/map-styles";
 import MapControls from "@/components/map/map-controls";
+import Train3DLayer from "@/components/map/train-3d-layer";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 
 interface MapComponentProps {
@@ -29,8 +30,8 @@ const Map = ({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
-  const trainMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const userLocationMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const use3DTrains = true; // Enable 3D train models
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapInstance, setMapInstance] = useState<mapboxgl.Map | null>(null);
   const [followingTrain, setFollowingTrain] = useState<"Red" | "Blue" | null>(
@@ -101,50 +102,8 @@ const Map = ({
     };
   }, []);
 
-  useEffect(() => {
-    if (!mapLoaded || !mapRef.current) return;
-
-    const createTrainEl = (color: string) => {
-      const el = document.createElement("div");
-      el.className = `relative w-5 h-5 rounded-full bg-gradient-to-r ${color} shadow-lg animate-pulse cursor-pointer`;
-      el.innerHTML = `<div class="absolute inset-0 rounded-full border-2 border-white/30 animate-ping"></div>`;
-      return el;
-    };
-
-    const redMarker = new mapboxgl.Marker({
-      element: createTrainEl("from-red-500 to-red-600"),
-      rotationAlignment: "map",
-    })
-      .setLngLat([0, 0])
-      .addTo(mapRef.current);
-
-    const blueMarker = new mapboxgl.Marker({
-      element: createTrainEl("from-blue-500 to-blue-600"),
-      rotationAlignment: "map",
-    })
-      .setLngLat([0, 0])
-      .addTo(mapRef.current);
-
-    trainMarkersRef.current = [redMarker, blueMarker];
-  }, [mapLoaded]);
-
-  useEffect(() => {
-    const [redMarker, blueMarker] = trainMarkersRef.current;
-    if (redMarker && redTrain.trainPosition) {
-      redMarker.setLngLat([
-        redTrain.trainPosition.lng,
-        redTrain.trainPosition.lat,
-      ]);
-      redMarker.setRotation(redTrain.trainPosition.bearing);
-    }
-    if (blueMarker && blueTrain.trainPosition) {
-      blueMarker.setLngLat([
-        blueTrain.trainPosition.lng,
-        blueTrain.trainPosition.lat,
-      ]);
-      blueMarker.setRotation(blueTrain.trainPosition.bearing);
-    }
-  }, [redTrain.trainPosition, blueTrain.trainPosition]);
+  // 3D train models are now handled by Train3DLayer component
+  // The trainPosition updates are passed to the component via props
 
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return;
@@ -312,7 +271,16 @@ const Map = ({
       <div className="flex-1 h-full relative bg-black overflow-hidden">
         <div ref={mapContainerRef} className="w-full h-full" />
 
-        {/* Map Search - top left */}
+        {/* 3D Train Models */}
+        {mapLoaded && use3DTrains && (
+          <Train3DLayer
+            map={mapInstance}
+            redTrainPosition={redTrain.trainPosition}
+            blueTrainPosition={blueTrain.trainPosition}
+          />
+        )}
+
+        {/* Map Search - top center */}
         {mapLoaded && <MapSearch />}
 
         {/* Map Style Switcher - bottom left */}

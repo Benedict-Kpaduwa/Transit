@@ -1,7 +1,6 @@
 import * as React from "react";
-import { Slot } from "@radix-ui/react-slot";
-import { cva, type VariantProps } from "class-variance-authority";
-import { PanelLeftIcon, ChevronDown } from "lucide-react";
+import { cva } from "class-variance-authority";
+import { PanelLeftIcon, ChevronDown, type LucideIcon } from "lucide-react";
 
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
@@ -68,7 +67,7 @@ export function SidebarProvider({
     setOpen(!open);
   }, [open, setOpen]);
 
-  const state = open ? "expanded" : "collapsed";
+  const state: "expanded" | "collapsed" = open ? "expanded" : "collapsed";
 
   const value = React.useMemo(
     () => ({ state, open, setOpen, isMobile, toggleSidebar }),
@@ -101,14 +100,14 @@ export function Sidebar({ children, className }: React.ComponentProps<"div">) {
     <aside
       data-state={state}
       className={cn(
-        "group sticky top-0 z-20 hidden h-screen transition-[width] duration-300 ease-in-out md:block",
+        "group sticky top-0 z-20 hidden h-screen transition-[width] duration-300 ease-in-out md:block shrink-0",
         state === "expanded"
           ? "w-(--sidebar-width)"
           : "w-(--sidebar-width-icon)",
         className
       )}
     >
-      <div className="flex h-full flex-col bg-[#1c1c1e] backdrop-blur-md">
+      <div className="flex h-full w-full flex-col bg-[#1c1c1e] backdrop-blur-md overflow-hidden">
         {children}
       </div>
     </aside>
@@ -120,8 +119,15 @@ export function SidebarHeader({
   children,
   className,
 }: React.ComponentProps<"div">) {
+  const { state } = useSidebar();
   return (
-    <div className={cn("flex h-20 items-center px-4", className)}>
+    <div
+      className={cn(
+        "flex h-20 items-center shrink-0 transition-all duration-300",
+        state === "expanded" ? "px-4" : "px-2 justify-center",
+        className
+      )}
+    >
       {children}
     </div>
   );
@@ -131,10 +137,12 @@ export function SidebarContent({
   children,
   className,
 }: React.ComponentProps<"div">) {
+  const { state } = useSidebar();
   return (
     <div
       className={cn(
-        "flex-1 overflow-y-auto px-3 py-2 space-y-4 custom-scrollbar",
+        "flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar transition-all duration-300",
+        state === "expanded" ? "px-3 py-2 space-y-4" : "px-1 py-2",
         className
       )}
     >
@@ -204,7 +212,7 @@ export function SidebarItem({
   onClick,
   children,
 }: {
-  icon: any;
+  icon: LucideIcon;
   label: string;
   active?: boolean;
   onClick?: () => void;

@@ -8,13 +8,21 @@ import {
   Sparkles,
   Clock,
   MapPin,
+  Info,
+  Settings,
 } from "lucide-react";
 import {
   Sidebar,
   SidebarHeader,
   SidebarContent,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useAllStationsByLineSorted } from "@/hooks/queries";
 import { useMapStore } from "@/stores/useMapStore";
 import { cn } from "@/lib/utils";
@@ -41,7 +49,7 @@ function StationItem({
       )}
     >
       {/* Station dot with pulse animation when selected */}
-      <div className="relative flex-shrink-0">
+      <div className="relative shrink-0">
         <div
           className={cn(
             "size-2.5 rounded-full transition-all",
@@ -170,10 +178,57 @@ function LineSection({
   );
 }
 
+// Collapsed nav item with tooltip
+function CollapsedNavItem({
+  icon: Icon,
+  label,
+  color,
+  onClick,
+  isActive,
+}: {
+  icon: typeof Train;
+  label: string;
+  color?: "red" | "blue" | "default";
+  onClick?: () => void;
+  isActive?: boolean;
+}) {
+  const colorClasses = {
+    red: "text-red-400 hover:bg-red-500/10",
+    blue: "text-blue-400 hover:bg-blue-500/10",
+    default: "text-zinc-400 hover:bg-white/5",
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          aria-label={label}
+          className={cn(
+            "w-full flex items-center justify-center p-3 rounded-xl transition-all duration-200",
+            colorClasses[color || "default"],
+            isActive && "bg-white/10"
+          )}
+        >
+          <Icon className="size-5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="font-medium">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 const AppSidebar = () => {
+  const { state } = useSidebar();
+  const isCollapsed = state === "collapsed";
   const { data: stations } = useAllStationsByLineSorted();
   const { selectedStation, setSelectedStation } = useMapStore();
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeSection, setActiveSection] = useState<"red" | "blue" | null>(
+    "red"
+  );
 
   // Filter stations based on search
   const filteredRed =
@@ -185,6 +240,79 @@ const AppSidebar = () => {
       s.name.toLowerCase().includes(searchQuery.toLowerCase())
     ) ?? [];
 
+  // Collapsed sidebar view - icons only
+  if (isCollapsed) {
+    return (
+      <Sidebar className="border-r border-zinc-800/50">
+        <SidebarHeader className="border-b border-zinc-800/50 flex items-center justify-center py-4">
+          <div className="relative">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-red-500 to-red-600 text-white shadow-lg shadow-red-500/25">
+              <Train className="size-5" />
+            </div>
+            <div className="absolute -bottom-0.5 -right-0.5 size-3 bg-green-500 rounded-full border-2 border-[#1c1c1e]" />
+          </div>
+        </SidebarHeader>
+
+        <SidebarContent className="flex flex-col items-center py-4 px-2 space-y-2">
+          {/* Search icon */}
+          <CollapsedNavItem icon={Search} label="Search Stations" />
+
+          {/* Status indicator */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="w-full flex items-center justify-center p-3 rounded-xl">
+                <div className="relative">
+                  <Circle className="size-3 fill-green-500 text-green-500" />
+                  <div className="absolute inset-0 rounded-full animate-ping opacity-50 bg-green-500" />
+                </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="font-medium">
+              Status: All Clear
+            </TooltipContent>
+          </Tooltip>
+
+          <div className="w-8 h-px bg-zinc-800 my-2" />
+
+          {/* Red Line */}
+          <CollapsedNavItem
+            icon={Train}
+            label={`Red Line (${stations?.red.length ?? 0} stations)`}
+            color="red"
+            onClick={() => setActiveSection("red")}
+            isActive={activeSection === "red"}
+          />
+
+          {/* Blue Line */}
+          <CollapsedNavItem
+            icon={Train}
+            label={`Blue Line (${stations?.blue.length ?? 0} stations)`}
+            color="blue"
+            onClick={() => setActiveSection("blue")}
+            isActive={activeSection === "blue"}
+          />
+
+          <div className="w-8 h-px bg-zinc-800 my-2" />
+
+          {/* Bus */}
+          <CollapsedNavItem icon={Bus} label="Bus Routes (Coming Soon)" />
+
+          {/* Info */}
+          <CollapsedNavItem icon={Info} label="Information" />
+
+          {/* Settings */}
+          <CollapsedNavItem icon={Settings} label="Settings" />
+        </SidebarContent>
+
+        {/* Footer with toggle */}
+        <div className="mt-auto p-3 border-t border-zinc-800/50 flex justify-center">
+          <SidebarTrigger className="text-zinc-400 hover:text-white" />
+        </div>
+      </Sidebar>
+    );
+  }
+
+  // Expanded sidebar view - full content
   return (
     <Sidebar className="border-r border-zinc-800/50">
       {/* Header */}
