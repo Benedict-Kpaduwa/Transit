@@ -1,4 +1,3 @@
-import React from "react";
 import { PlusIcon, MinusIcon } from "lucide-react";
 
 import { useMap } from "@/context/map-context";
