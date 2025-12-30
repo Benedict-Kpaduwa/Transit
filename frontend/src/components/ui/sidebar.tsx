@@ -107,7 +107,7 @@ export function Sidebar({ children, className }: React.ComponentProps<"div">) {
         className
       )}
     >
-      <div className="flex h-full w-full flex-col bg-[#1c1c1e] backdrop-blur-md overflow-hidden">
+      <div className="flex h-full w-full flex-col bg-sidebar backdrop-blur-md overflow-hidden">
         {children}
       </div>
     </aside>
@@ -323,7 +323,7 @@ export function SidebarTrigger({ className }: { className?: string }) {
       <PanelLeftIcon
         className={cn(
           "size-5 transition-transform duration-300",
-          state === "collapsed" && "rotate-180 text-indigo-600"
+          state === "collapsed" && "rotate-180 text-sidebar-primary"
         )}
       />
       <span className="sr-only">Toggle Sidebar</span>

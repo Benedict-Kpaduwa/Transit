@@ -1,5 +1,3 @@
-"use client";
-
 import React, { useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
@@ -7,7 +5,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import { MapContext } from "@/context/map-context";
 import { Loader } from "lucide-react";
 
-mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
+mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN!;
 
 type MapComponentProps = {
   mapContainerRef: React.RefObject<HTMLDivElement | null>;
@@ -58,12 +56,12 @@ export default function MapProvider({
   }, [initialViewState]);
 
   return (
-    <div className="z-[1000]">
+    <div className="z-1000">
       <MapContext.Provider value={{ map: mapRef.current! }}>
         {children}
       </MapContext.Provider>
       {!loaded && (
-        <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-[1000]">
+        <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-1000">
           <div className="text-lg font-medium flex items-center gap-2">
             <Loader className="size-5 animate-spin" />
             Loading map...
