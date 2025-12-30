@@ -7,7 +7,8 @@ function getSessionToken(): string {
         const stored = sessionStorage.getItem("mapbox_session_token");
         if (stored) return stored;
 
-        const token = process.env.NEXT_PUBLIC_MAPBOX_SESSION_TOKEN ?? "";
+        // Generate a unique session token for this session
+        const token = crypto.randomUUID();
         sessionStorage.setItem("mapbox_session_token", token);
         return token;
     }
@@ -33,11 +34,11 @@ export interface RetrieveResponse {
 export async function searchLocations(
     options: SearchOptions
 ): Promise<LocationSuggestion[]> {
-    const { query, country = "US", limit = 5, proximity, signal } = options;
+    const { query, country = "CA", limit = 5, proximity, signal } = options;
 
-    const accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+    const accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
     if (!accessToken) {
-        throw new Error("MAPBOX_TOKEN is not configured");
+        throw new Error("VITE_MAPBOX_ACCESS_TOKEN is not configured");
     }
 
     const sessionToken = getSessionToken();
@@ -81,9 +82,9 @@ export async function retrieveLocation(
     mapboxId: string,
     signal?: AbortSignal
 ): Promise<LocationFeature[]> {
-    const accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+    const accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
     if (!accessToken) {
-        throw new Error("MAPBOX_TOKEN is not configured");
+        throw new Error("VITE_MAPBOX_ACCESS_TOKEN is not configured");
     }
 
     const sessionToken = getSessionToken();

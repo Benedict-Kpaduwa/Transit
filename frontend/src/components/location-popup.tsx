@@ -1,4 +1,5 @@
-import type { LocationFeature, iconMap } from "@/lib/mapbox/utils";
+import type { LocationFeature } from "@/lib/mapbox/utils";
+import { iconMap } from "@/lib/mapbox/utils";
 import { cn } from "@/lib/utils";
 import { LocateIcon, MapPin } from "lucide-react";
 

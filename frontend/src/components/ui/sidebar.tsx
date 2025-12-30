@@ -36,25 +36,43 @@ export function useSidebar() {
 
 export function SidebarProvider({
   defaultOpen = true,
+  open: controlledOpen,
+  onOpenChange,
   children,
   className,
 }: {
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: React.ReactNode;
   className?: string;
 }) {
   const isMobile = useIsMobile();
-  const [open, setOpen] = React.useState(defaultOpen);
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen);
+
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : uncontrolledOpen;
+
+  const setOpen = React.useCallback(
+    (value: boolean) => {
+      if (isControlled) {
+        onOpenChange?.(value);
+      } else {
+        setUncontrolledOpen(value);
+      }
+    },
+    [isControlled, onOpenChange]
+  );
 
   const toggleSidebar = React.useCallback(() => {
-    setOpen((prev) => !prev);
-  }, []);
+    setOpen(!open);
+  }, [open, setOpen]);
 
   const state = open ? "expanded" : "collapsed";
 
   const value = React.useMemo(
     () => ({ state, open, setOpen, isMobile, toggleSidebar }),
-    [state, open, isMobile, toggleSidebar]
+    [state, open, setOpen, isMobile, toggleSidebar]
   );
 
   return (
@@ -67,10 +85,7 @@ export function SidebarProvider({
               "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
             } as React.CSSProperties
           }
-          className={cn(
-            "flex min-h-screen w-full bg-gray-800 dark:bg-slate-950",
-            className
-          )}
+          className={cn("flex min-h-screen w-full bg-[#0a0a0a]", className)}
         >
           {children}
         </div>

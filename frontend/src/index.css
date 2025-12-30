@@ -136,21 +136,33 @@
   z-index: 2;
 }
 
-.red-train .train-core { background: #ef4444; box-shadow: 0 0 15px #ef4444; }
-.blue-train .train-core { background: #3b82f6; box-shadow: 0 0 15px #3b82f6; }
+.red-train .train-core {
+  background: #ef4444;
+  box-shadow: 0 0 15px #ef4444;
+}
+.blue-train .train-core {
+  background: #3b82f6;
+  box-shadow: 0 0 15px #3b82f6;
+}
 
 .train-ping {
   position: absolute;
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 2px solid rgba(255,255,255,0.5);
+  border: 2px solid rgba(255, 255, 255, 0.5);
   animation: train-pulse 2s infinite;
 }
 
 @keyframes train-pulse {
-  0% { transform: scale(0.5); opacity: 1; }
-  100% { transform: scale(2); opacity: 0; }
+  0% {
+    transform: scale(0.5);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
 }
 
 .station-dot {
@@ -161,4 +173,35 @@
   cursor: pointer;
   border: 2px solid #000;
 }
-.station-dot:hover { transform: scale(1.5); transition: 0.2s; }
+.station-dot:hover {
+  transform: scale(1.5);
+  transition: 0.2s;
+}
+
+/* Custom scrollbar for sidebar */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Hide scrollbar until hover */
+.custom-scrollbar:not(:hover)::-webkit-scrollbar-thumb {
+  background: transparent;
+}

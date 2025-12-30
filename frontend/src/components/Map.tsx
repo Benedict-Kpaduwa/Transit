@@ -5,6 +5,11 @@ import type { Station, RouteLine } from "@/types";
 import { useTrainSimulation } from "@/hooks/useTrainSimulation";
 import TrainControls from "./TrainControls";
 import { Zap, X } from "lucide-react";
+import { MapContext } from "@/context/map-context";
+import MapSearch from "@/components/map/map-search";
+import MapStyles from "@/components/map/map-styles";
+import MapControls from "@/components/map/map-controls";
+import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 
 interface MapComponentProps {
   stations: Station[];
@@ -26,6 +31,7 @@ const Map = ({
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const trainMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [mapInstance, setMapInstance] = useState<mapboxgl.Map | null>(null);
   const [followingTrain, setFollowingTrain] = useState<"Red" | "Blue" | null>(
     null
   );
@@ -63,21 +69,29 @@ const Map = ({
     const map = new mapboxgl.Map({
       style: "mapbox://styles/mapbox/dark-v11",
       container: mapContainerRef.current,
-      center: [-114.0708, 51.0447],
+      center: MAP_CONSTANTS.CENTER,
       antialias: true,
-      zoom: 11,
-      pitch: 52,
+      zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
+      pitch: MAP_CONSTANTS.DEFAULT_PITCH,
     });
 
     mapRef.current = map;
-    map.addControl(new mapboxgl.NavigationControl(), "top-right");
+    setMapInstance(map);
 
     map.on("load", () => {
       setMapLoaded(true);
       setupMapLayers(map, routeLines);
     });
 
-    return () => map.remove();
+    // Re-add layers when style changes (e.g., from MapStyles component)
+    map.on("style.load", () => {
+      setupMapLayers(map, routeLines);
+    });
+
+    return () => {
+      map.remove();
+      setMapInstance(null);
+    };
   }, []);
 
   useEffect(() => {
@@ -187,87 +201,106 @@ const Map = ({
   }, [redTrain.trainPosition, blueTrain.trainPosition, followingTrain]);
 
   return (
-    <div className="flex-1 h-full relative bg-black overflow-hidden">
-      <div ref={mapContainerRef} className="w-full h-full" />
-      <div className="absolute bottom-32 left-8 flex flex-col gap-2 rounded-2xl">
-        <button
-          onClick={() =>
-            setFollowingTrain(followingTrain === "Red" ? null : "Red")
-          }
-          className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
-            followingTrain === "Red"
-              ? "bg-red-500 border-white"
-              : "bg-black/80 border-red-500 text-red-500"
-          }`}
-        >
-          {followingTrain === "Red" ? "STOP FOLLOWING" : "FOLLOW RED TRAIN"}
-        </button>
-        <button
-          onClick={() =>
-            setFollowingTrain(followingTrain === "Blue" ? null : "Blue")
-          }
-          className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
-            followingTrain === "Blue"
-              ? "bg-blue-500 border-white"
-              : "bg-black/80 border-blue-500 text-blue-500"
-          }`}
-        >
-          {followingTrain === "Blue" ? "STOP FOLLOWING" : "FOLLOW BLUE TRAIN"}
-        </button>
-      </div>
-      <TrainControls redTrain={redTrain} blueTrain={blueTrain} />
+    <MapContext.Provider value={{ map: mapInstance }}>
+      <div className="flex-1 h-full relative bg-black overflow-hidden">
+        <div ref={mapContainerRef} className="w-full h-full" />
 
-      <button
-        onClick={() =>
-          mapRef.current?.flyTo({
-            center: [-114.0708, 51.0447],
-            zoom: 11,
-            pitch: 52,
-            bearing: 0,
-          })
-        }
-        className="absolute top-8 right-16 z-10 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl hover:bg-zinc-800 transition-all"
-      >
-        <Zap className="w-5 h-5 text-zinc-300" />
-      </button>
+        {/* Map Search - top left */}
+        {mapLoaded && <MapSearch />}
 
-      {selectedStation && (
-        <div className="absolute top-20 right-16 bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-5 min-w-[280px] shadow-2xl z-20">
+        {/* Map Style Switcher - bottom left */}
+        {mapLoaded && <MapStyles />}
+
+        {/* Zoom Controls - bottom right */}
+        {mapLoaded && <MapControls />}
+
+        {/* Train Following Controls */}
+        <div className="absolute bottom-32 left-8 flex flex-col gap-2 rounded-2xl z-10">
           <button
-            onClick={onCloseStationInfo}
-            className="absolute top-8 right-3 text-zinc-500 hover:text-zinc-300 transition-colors"
+            onClick={() =>
+              setFollowingTrain(followingTrain === "Red" ? null : "Red")
+            }
+            className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
+              followingTrain === "Red"
+                ? "bg-red-500 border-white text-white"
+                : "bg-black/80 border-red-500 text-red-500"
+            }`}
           >
-            <X className="w-4 h-4" />
+            {followingTrain === "Red" ? "STOP FOLLOWING" : "FOLLOW RED TRAIN"}
           </button>
-
-          <h3 className="text-lg font-semibold text-white mb-3 pr-6">
-            {selectedStation.name}
-          </h3>
-
-          <div className="space-y-2.5 text-sm">
-            <div className="flex items-center gap-2">
-              <span className="text-zinc-400">Line:</span>
-              <span
-                className={`font-semibold ${
-                  selectedStation.line === "Red"
-                    ? "text-red-400"
-                    : "text-blue-400"
-                }`}
-              >
-                {selectedStation.line} Line
-              </span>
-            </div>
-            {selectedStation.shared && (
-              <div className="bg-amber-500/15 border border-amber-500/25 rounded-lg px-3 py-2 mt-3">
-                <p className="text-amber-400 font-medium text-xs">
-                  ⭐ Downtown Transit Mall
-                </p>
-              </div>
-            )}
-          </div>
+          <button
+            onClick={() =>
+              setFollowingTrain(followingTrain === "Blue" ? null : "Blue")
+            }
+            className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
+              followingTrain === "Blue"
+                ? "bg-blue-500 border-white text-white"
+                : "bg-black/80 border-blue-500 text-blue-500"
+            }`}
+          >
+            {followingTrain === "Blue" ? "STOP FOLLOWING" : "FOLLOW BLUE TRAIN"}
+          </button>
         </div>
-      )}
-    </div>
+
+        {/* Train Speed Controls */}
+        <TrainControls redTrain={redTrain} blueTrain={blueTrain} />
+
+        {/* Reset View Button */}
+        <button
+          onClick={() =>
+            mapRef.current?.flyTo({
+              center: MAP_CONSTANTS.CENTER,
+              zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
+              pitch: MAP_CONSTANTS.DEFAULT_PITCH,
+              bearing: 0,
+            })
+          }
+          className="absolute top-4 right-4 z-10 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl hover:bg-zinc-800 transition-all"
+          aria-label="Reset map view"
+        >
+          <Zap className="w-5 h-5 text-zinc-300" />
+        </button>
+
+        {/* Selected Station Info Panel */}
+        {selectedStation && (
+          <div className="absolute top-20 right-4 bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-5 min-w-[280px] shadow-2xl z-20">
+            <button
+              onClick={onCloseStationInfo}
+              className="absolute top-4 right-3 text-zinc-500 hover:text-zinc-300 transition-colors"
+              aria-label="Close station info"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <h3 className="text-lg font-semibold text-white mb-3 pr-6">
+              {selectedStation.name}
+            </h3>
+
+            <div className="space-y-2.5 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-zinc-400">Line:</span>
+                <span
+                  className={`font-semibold ${
+                    selectedStation.line === "Red"
+                      ? "text-red-400"
+                      : "text-blue-400"
+                  }`}
+                >
+                  {selectedStation.line} Line
+                </span>
+              </div>
+              {selectedStation.shared && (
+                <div className="bg-amber-500/15 border border-amber-500/25 rounded-lg px-3 py-2 mt-3">
+                  <p className="text-amber-400 font-medium text-xs">
+                    ⭐ Downtown Transit Mall
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </MapContext.Provider>
   );
 };
 
