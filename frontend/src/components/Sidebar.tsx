@@ -1,4 +1,4 @@
-import type { Station } from "../data/StationObject";
+import type { Station } from "@/types";
 import StationCard from "./Station";
 import {
   Accordion,

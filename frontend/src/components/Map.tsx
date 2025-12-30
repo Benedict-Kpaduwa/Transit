@@ -187,9 +187,9 @@ const Map = ({
   }, [redTrain.trainPosition, blueTrain.trainPosition, followingTrain]);
 
   return (
-    <div className="flex-1 h-full relative bg-black">
+    <div className="flex-1 h-full relative bg-black overflow-hidden">
       <div ref={mapContainerRef} className="w-full h-full" />
-      <div className="absolute bottom-32 left-8 flex flex-col gap-2">
+      <div className="absolute bottom-32 left-8 flex flex-col gap-2 rounded-2xl">
         <button
           onClick={() =>
             setFollowingTrain(followingTrain === "Red" ? null : "Red")
