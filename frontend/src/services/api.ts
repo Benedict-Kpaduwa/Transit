@@ -38,17 +38,30 @@ export const stationApi = {
 
   getRouteLines: async (line?: "Red" | "Blue"): Promise<RouteLine[]> => {
     try {
-      let url = "/lrt/routes/generated";
+      // Use /lrt/tracks for actual track geometry from GTFS shapes
+      let url = "/lrt/tracks";
       if (line) {
         const lineParam = line === "Red" ? "RED" : "BLUE";
-        url = `/lrt/routes/generated?line=${lineParam}`;
+        url = `/lrt/tracks?line=${lineParam}`;
       }
 
       const response = await api.get<GeoJSONFeatureCollection>(url);
       return transformRouteLines(response.data);
     } catch (error) {
       console.error("Error fetching route lines:", error);
-      throw error;
+      // Fallback to generated routes if tracks fail
+      try {
+        let fallbackUrl = "/lrt/routes/generated";
+        if (line) {
+          const lineParam = line === "Red" ? "RED" : "BLUE";
+          fallbackUrl = `/lrt/routes/generated?line=${lineParam}`;
+        }
+        const fallbackResponse = await api.get<GeoJSONFeatureCollection>(fallbackUrl);
+        return transformRouteLines(fallbackResponse.data);
+      } catch (fallbackError) {
+        console.error("Fallback also failed:", fallbackError);
+        throw error;
+      }
     }
   },
 

@@ -205,3 +205,27 @@
 .custom-scrollbar:not(:hover)::-webkit-scrollbar-thumb {
   background: transparent;
 }
+
+/* User location marker */
+.user-location-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+}
+
+.user-location-marker .size-10 {
+  width: 40px;
+  height: 40px;
+}
+
+.user-location-marker .size-6 {
+  width: 24px;
+  height: 24px;
+}
+
+.user-location-marker .size-4 {
+  width: 16px;
+  height: 16px;
+}

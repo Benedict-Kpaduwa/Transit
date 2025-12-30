@@ -23,7 +23,7 @@ const TrainControls: React.FC<TrainControlsProps> = ({
   redTrain,
   blueTrain,
 }) => (
-  <div className="absolute bottom-24 right-6 z-10 space-y-3">
+  <div className="absolute top-1/2 -translate-y-1/2 right-4 z-10 space-y-3">
     <div className="bg-linear-to-r from-gray-800/90 to-gray-900/90 backdrop-blur-sm rounded-xl border border-gray-700/50 p-4 shadow-lg">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">

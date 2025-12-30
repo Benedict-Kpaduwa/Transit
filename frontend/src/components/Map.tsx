@@ -1,10 +1,10 @@
-import { useRef, useEffect, useState, useMemo } from "react";
+import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Station, RouteLine } from "@/types";
 import { useTrainSimulation } from "@/hooks/useTrainSimulation";
 import TrainControls from "./TrainControls";
-import { Zap, X } from "lucide-react";
+import { Zap, X, Navigation, Loader2 } from "lucide-react";
 import { MapContext } from "@/context/map-context";
 import MapSearch from "@/components/map/map-search";
 import MapStyles from "@/components/map/map-styles";
@@ -30,11 +30,18 @@ const Map = ({
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const trainMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const userLocationMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapInstance, setMapInstance] = useState<mapboxgl.Map | null>(null);
   const [followingTrain, setFollowingTrain] = useState<"Red" | "Blue" | null>(
     null
   );
+  const [userLocation, setUserLocation] = useState<{
+    lng: number;
+    lat: number;
+  } | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   const mapboxToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
@@ -200,6 +207,106 @@ const Map = ({
     }
   }, [redTrain.trainPosition, blueTrain.trainPosition, followingTrain]);
 
+  // Create user location marker element
+  const createUserLocationEl = useCallback(() => {
+    const el = document.createElement("div");
+    el.className = "user-location-marker";
+    el.innerHTML = `
+      <div class="relative flex items-center justify-center">
+        <div class="absolute size-10 rounded-full bg-blue-500/20 animate-ping"></div>
+        <div class="absolute size-6 rounded-full bg-blue-500/30"></div>
+        <div class="relative size-4 rounded-full bg-blue-500 border-2 border-white shadow-lg"></div>
+      </div>
+    `;
+    return el;
+  }, []);
+
+  // Update user location marker when location changes
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current || !userLocation) return;
+
+    // Remove existing marker
+    if (userLocationMarkerRef.current) {
+      userLocationMarkerRef.current.remove();
+    }
+
+    // Create new marker
+    const marker = new mapboxgl.Marker({
+      element: createUserLocationEl(),
+      anchor: "center",
+    })
+      .setLngLat([userLocation.lng, userLocation.lat])
+      .addTo(mapRef.current);
+
+    userLocationMarkerRef.current = marker;
+
+    return () => {
+      marker.remove();
+    };
+  }, [mapLoaded, userLocation, createUserLocationEl]);
+
+  // Get user location
+  const getUserLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setLocationError("Geolocation is not supported by your browser");
+      return;
+    }
+
+    setIsLocating(true);
+    setLocationError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { longitude, latitude } = position.coords;
+        setUserLocation({ lng: longitude, lat: latitude });
+        setIsLocating(false);
+
+        // Fly to user location
+        mapRef.current?.flyTo({
+          center: [longitude, latitude],
+          zoom: 15,
+          pitch: 60,
+          duration: 2000,
+        });
+      },
+      (error) => {
+        setIsLocating(false);
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            setLocationError("Location permission denied");
+            break;
+          case error.POSITION_UNAVAILABLE:
+            setLocationError("Location unavailable");
+            break;
+          case error.TIMEOUT:
+            setLocationError("Location request timed out");
+            break;
+          default:
+            setLocationError("Failed to get location");
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  }, []);
+
+  // Fly to user location (if already obtained)
+  const flyToUserLocation = useCallback(() => {
+    if (userLocation && mapRef.current) {
+      mapRef.current.flyTo({
+        center: [userLocation.lng, userLocation.lat],
+        zoom: 15,
+        pitch: 60,
+        duration: 1500,
+      });
+    } else {
+      getUserLocation();
+    }
+  }, [userLocation, getUserLocation]);
+
   return (
     <MapContext.Provider value={{ map: mapInstance }}>
       <div className="flex-1 h-full relative bg-black overflow-hidden">
@@ -245,21 +352,60 @@ const Map = ({
         {/* Train Speed Controls */}
         <TrainControls redTrain={redTrain} blueTrain={blueTrain} />
 
-        {/* Reset View Button */}
-        <button
-          onClick={() =>
-            mapRef.current?.flyTo({
-              center: MAP_CONSTANTS.CENTER,
-              zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
-              pitch: MAP_CONSTANTS.DEFAULT_PITCH,
-              bearing: 0,
-            })
-          }
-          className="absolute top-4 right-4 z-10 p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl hover:bg-zinc-800 transition-all"
-          aria-label="Reset map view"
-        >
-          <Zap className="w-5 h-5 text-zinc-300" />
-        </button>
+        {/* Map Action Buttons */}
+        <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+          {/* Reset View Button */}
+          <button
+            onClick={() =>
+              mapRef.current?.flyTo({
+                center: MAP_CONSTANTS.CENTER,
+                zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
+                pitch: MAP_CONSTANTS.DEFAULT_PITCH,
+                bearing: 0,
+              })
+            }
+            className="p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl hover:bg-zinc-800 transition-all"
+            aria-label="Reset map view"
+          >
+            <Zap className="w-5 h-5 text-zinc-300" />
+          </button>
+
+          {/* My Location Button */}
+          <button
+            onClick={flyToUserLocation}
+            disabled={isLocating}
+            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+              userLocation
+                ? "bg-blue-600/90 border-blue-500 hover:bg-blue-500"
+                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
+            } ${isLocating ? "cursor-wait" : ""}`}
+            aria-label="My location"
+          >
+            {isLocating ? (
+              <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
+            ) : (
+              <Navigation
+                className={`w-5 h-5 ${
+                  userLocation ? "text-white" : "text-zinc-300"
+                }`}
+              />
+            )}
+          </button>
+        </div>
+
+        {/* Location Error Toast */}
+        {locationError && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-red-500/90 backdrop-blur-sm text-white px-4 py-2 rounded-xl text-sm font-medium shadow-lg animate-in fade-in slide-in-from-top-2">
+            {locationError}
+            <button
+              onClick={() => setLocationError(null)}
+              className="ml-3 hover:text-red-200"
+              aria-label="Dismiss error"
+            >
+              <X className="w-4 h-4 inline" />
+            </button>
+          </div>
+        )}
 
         {/* Selected Station Info Panel */}
         {selectedStation && (
