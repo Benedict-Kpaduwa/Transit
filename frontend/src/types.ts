@@ -62,3 +62,54 @@ export interface Train {
   line: LineColor;
   nextStation: string;
 }
+
+// Real-time C-Train position from API
+export interface CTrainPosition {
+  vehicle_id: string;
+  route_id: string;
+  line: "RED" | "BLUE";
+  trip_id: string;
+  position: {
+    latitude: number;
+    longitude: number;
+    bearing?: number;
+    speed?: number;
+  };
+  nearest_station?: string;
+  distance_to_station?: number;
+  timestamp: string;
+}
+
+export interface CTrainResponse {
+  total: number;
+  line: string;
+  ctrains: CTrainPosition[];
+}
+
+export interface CTrainGeoJSONFeature {
+  type: "Feature";
+  geometry: {
+    type: "Point";
+    coordinates: [number, number];
+  };
+  properties: {
+    vehicle_id: string;
+    route_id: string;
+    line: "RED" | "BLUE";
+    trip_id: string;
+    nearest_station?: string;
+    distance_to_station?: number;
+    timestamp: string;
+    type: "CTRAIN";
+  };
+}
+
+export interface CTrainGeoJSONResponse {
+  type: "FeatureCollection";
+  features: CTrainGeoJSONFeature[];
+  metadata: {
+    count: number;
+    line: string;
+    timestamp: string;
+  };
+}

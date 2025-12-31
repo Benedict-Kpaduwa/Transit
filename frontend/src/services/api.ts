@@ -1,4 +1,10 @@
-import type { GeoJSONFeatureCollection, RouteLine, Station } from "@/types";
+import type {
+  GeoJSONFeatureCollection,
+  RouteLine,
+  Station,
+  CTrainPosition,
+  CTrainResponse,
+} from "@/types";
 import axios from "axios";
 
 const api = axios.create({
@@ -110,6 +116,103 @@ export const stationApi = {
     } catch (error) {
       console.error("Backend connection failed:", error);
       return false;
+    }
+  },
+};
+
+// C-Train real-time position API
+export const ctrainApi = {
+  /**
+   * Get all real-time C-Train positions
+   * @param line - Optional filter: "RED" or "BLUE"
+   */
+  getPositions: async (line?: "RED" | "BLUE"): Promise<CTrainPosition[]> => {
+    try {
+      const params = line ? { line } : {};
+      const response = await api.get<CTrainResponse>("/ctrains", { params });
+      return response.data.ctrains;
+    } catch (error) {
+      console.error("Error fetching C-Train positions:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get C-Train positions by line
+   */
+  getRedLinePositions: async (): Promise<CTrainPosition[]> => {
+    return ctrainApi.getPositions("RED");
+  },
+
+  getBlueLinePositions: async (): Promise<CTrainPosition[]> => {
+    return ctrainApi.getPositions("BLUE");
+  },
+
+  /**
+   * Get all C-Train positions grouped by line
+   */
+  getAllPositionsByLine: async (): Promise<{
+    red: CTrainPosition[];
+    blue: CTrainPosition[];
+    all: CTrainPosition[];
+  }> => {
+    try {
+      const allTrains = await ctrainApi.getPositions();
+      return {
+        red: allTrains.filter((t) => t.line === "RED"),
+        blue: allTrains.filter((t) => t.line === "BLUE"),
+        all: allTrains,
+      };
+    } catch (error) {
+      console.error("Error fetching C-Train positions by line:", error);
+      return { red: [], blue: [], all: [] };
+    }
+  },
+};
+
+// Bus stops API
+export interface BusStop {
+  id: string;
+  name: string;
+  code: string;
+  coords: [number, number];
+}
+
+// Response type for bus stops GeoJSON
+interface BusStopGeoJSON {
+  type: "FeatureCollection";
+  features: Array<{
+    type: "Feature";
+    geometry: {
+      type: "Point";
+      coordinates: [number, number];
+    };
+    properties: {
+      stop_id?: string;
+      stop_name?: string;
+      stop_code?: string;
+    };
+  }>;
+}
+
+export const busStopApi = {
+  /**
+   * Get all bus stops as GeoJSON
+   */
+  getAllStops: async (): Promise<BusStop[]> => {
+    try {
+      const response = await api.get<BusStopGeoJSON>("/stops");
+      return response.data.features
+        .filter((f) => f.geometry.type === "Point")
+        .map((feature) => ({
+          id: feature.properties.stop_id || "",
+          name: feature.properties.stop_name || "Unknown Stop",
+          code: feature.properties.stop_code || "",
+          coords: feature.geometry.coordinates,
+        }));
+    } catch (error) {
+      console.error("Error fetching bus stops:", error);
+      return [];
     }
   },
 };

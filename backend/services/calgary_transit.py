@@ -408,38 +408,50 @@ async def get_realtime_ctrain_positions_with_routes(
     line: Optional[str] = None,
 ) -> List[Dict]:
     """
-    Fetch C-Train vehicle positions and enrich with route info
+    Fetch C-Train vehicle positions and enrich with route info.
+    Uses track geometry matching - if a vehicle is ON the train tracks, it's a C-Train!
 
     Args:
         line: Filter by C-Train line (RED/BLUE)
     """
     try:
-        vehicles, trip_updates, lrt_stations = await asyncio.gather(
+        # Fetch vehicles, trip updates, stations, AND track geometry
+        vehicles, trip_updates, lrt_stations, track_data = await asyncio.gather(
             get_realtime_vehicle_positions(),
             get_realtime_trip_updates(),
             get_lrt_stations_sorted_geojson(None),
+            get_lrt_tracks_from_gtfs(None),  # Get actual track geometry
         )
 
         print(f"📋 Loaded {len(vehicles)} vehicles, {len(trip_updates)} trip updates")
 
+        # Build trip_id to route_id mapping from trip updates
         trip_to_route = {}
-        ctrain_route_info = {}
-
         for update in trip_updates:
             trip_id = update.get("trip_id")
             route_id = update.get("route_id")
-
             if trip_id and route_id and route_id in ["201", "202"]:
                 trip_to_route[trip_id] = route_id
 
-                if route_id not in ctrain_route_info:
-                    ctrain_route_info[route_id] = {
-                        "type": "CTRAIN",
-                        "line": "RED" if route_id == "201" else "BLUE",
-                    }
+        print(f"📋 C-Train route mappings from trip updates: {len(trip_to_route)}")
 
-        print(f"📋 C-Train route mappings: {len(trip_to_route)}")
+        # Extract track coordinates for each line
+        red_track_coords = []
+        blue_track_coords = []
+        for feature in track_data.features:
+            if feature.geometry.type == "LineString":
+                line_name = feature.properties.get("line", "")
+                coords = feature.geometry.coordinates  # [[lon, lat], [lon, lat], ...]
+                if line_name == "RED":
+                    red_track_coords.extend(coords)
+                elif line_name == "BLUE":
+                    blue_track_coords.extend(coords)
 
+        print(
+            f"🛤️ Track points loaded - Red: {len(red_track_coords)}, Blue: {len(blue_track_coords)}"
+        )
+
+        # Build station coordinates for nearest station lookup
         lrt_coords = []
         for feature in lrt_stations.features:
             if feature.geometry.type == "Point":
@@ -454,14 +466,71 @@ async def get_realtime_ctrain_positions_with_routes(
                     }
                 )
 
-        def distance(lat1, lon1, lat2, lon2):
+        def point_distance(lat1, lon1, lat2, lon2):
+            """Calculate distance between two points (in degrees)"""
             return ((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) ** 0.5
+
+        def point_to_line_segment_distance(px, py, x1, y1, x2, y2):
+            """
+            Calculate the perpendicular distance from point (px, py) to line segment (x1,y1)-(x2,y2)
+            Returns distance in degrees
+            """
+            # Vector from point 1 to point 2
+            dx = x2 - x1
+            dy = y2 - y1
+
+            # If line segment is actually a point
+            if dx == 0 and dy == 0:
+                return point_distance(py, px, y1, x1)
+
+            # Parameter t for the projection of point onto the line
+            t = max(0, min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
+
+            # Closest point on the line segment
+            closest_x = x1 + t * dx
+            closest_y = y1 + t * dy
+
+            return point_distance(py, px, closest_y, closest_x)
+
+        def is_on_track(v_lat, v_lon, track_coords, threshold_meters=50):
+            """
+            Check if a point is within threshold_meters of any track segment.
+            Returns (is_on_track, min_distance_meters)
+            """
+            if not track_coords or len(track_coords) < 2:
+                return False, float("inf")
+
+            min_dist = float("inf")
+            # Check distance to each track segment
+            for i in range(len(track_coords) - 1):
+                lon1, lat1 = track_coords[i]
+                lon2, lat2 = track_coords[i + 1]
+                dist = point_to_line_segment_distance(
+                    v_lon, v_lat, lon1, lat1, lon2, lat2
+                )
+                if dist < min_dist:
+                    min_dist = dist
+
+            # Convert degrees to meters (approximate: 1 degree ≈ 111,000 meters)
+            dist_meters = min_dist * 111000
+            return dist_meters < threshold_meters, dist_meters
+
+        def find_nearest_station(v_lat, v_lon):
+            """Find the nearest LRT station to a position"""
+            nearest = None
+            min_dist = float("inf")
+            for station in lrt_coords:
+                dist = point_distance(v_lat, v_lon, station["lat"], station["lon"])
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest = station
+            return nearest, min_dist * 111000  # Convert to meters
 
         ctrain_vehicles = []
         match_methods = {
             "direct_route_id": 0,
             "trip_update_match": 0,
-            "spatial_match": 0,
+            "track_match": 0,
         }
 
         for vehicle in vehicles:
@@ -475,64 +544,64 @@ async def get_realtime_ctrain_positions_with_routes(
 
             route_id_from_vehicle = vehicle.get("route_id")
             is_ctrain = False
+            matched_line = None
 
+            # Method 1: Direct route_id from vehicle feed
             if route_id_from_vehicle in ["201", "202"]:
                 vehicle["vehicle_type"] = "CTRAIN"
-                vehicle["line"] = "RED" if route_id_from_vehicle == "201" else "BLUE"
+                matched_line = "RED" if route_id_from_vehicle == "201" else "BLUE"
+                vehicle["line"] = matched_line
                 is_ctrain = True
                 match_methods["direct_route_id"] += 1
 
+            # Method 2: Match via trip_id from trip updates
             elif trip_id and trip_id in trip_to_route:
                 route_id = trip_to_route[trip_id]
                 vehicle["route_id"] = route_id
                 vehicle["vehicle_type"] = "CTRAIN"
-                vehicle["line"] = "RED" if route_id == "201" else "BLUE"
+                matched_line = "RED" if route_id == "201" else "BLUE"
+                vehicle["line"] = matched_line
                 is_ctrain = True
                 match_methods["trip_update_match"] += 1
 
+            # Method 3: Check if vehicle is ON the C-Train tracks (key improvement!)
             else:
-                nearest_station = None
-                min_distance = float("inf")
+                on_red, red_dist = is_on_track(
+                    v_lat, v_lon, red_track_coords, threshold_meters=40
+                )
+                on_blue, blue_dist = is_on_track(
+                    v_lat, v_lon, blue_track_coords, threshold_meters=40
+                )
 
-                for station in lrt_coords:
-                    dist = distance(v_lat, v_lon, station["lat"], station["lon"])
-                    if dist < min_distance:
-                        min_distance = dist
-                        nearest_station = station
-
-                if nearest_station and min_distance < 0.006:
-                    route = nearest_station["route"]
-                    vehicle["route_id"] = route
+                if on_red or on_blue:
                     vehicle["vehicle_type"] = "CTRAIN"
-                    vehicle["nearest_station"] = nearest_station["name"]
-                    vehicle["distance_to_station"] = round(min_distance * 111000, 2)
 
-                    if route == "201":
-                        vehicle["line"] = "RED"
-                    elif route == "202":
-                        vehicle["line"] = "BLUE"
-                    elif route in ["201/202", "202/201"]:
-                        vehicle["line"] = "RED/BLUE"
+                    # Determine which line based on which track is closer
+                    if on_red and on_blue:
+                        # On both tracks (downtown shared section)
+                        matched_line = "RED/BLUE"
+                        vehicle["route_id"] = "201/202"
+                        vehicle["distance_to_track"] = min(red_dist, blue_dist)
+                    elif on_red:
+                        matched_line = "RED"
+                        vehicle["route_id"] = "201"
+                        vehicle["distance_to_track"] = red_dist
                     else:
-                        vehicle["line"] = None
+                        matched_line = "BLUE"
+                        vehicle["route_id"] = "202"
+                        vehicle["distance_to_track"] = blue_dist
 
+                    vehicle["line"] = matched_line
                     is_ctrain = True
-                    match_methods["spatial_match"] += 1
+                    match_methods["track_match"] += 1
 
             if is_ctrain:
+                # Find nearest station for all C-Trains
                 if "nearest_station" not in vehicle:
-                    nearest_station = None
-                    min_distance = float("inf")
-
-                    for station in lrt_coords:
-                        dist = distance(v_lat, v_lon, station["lat"], station["lon"])
-                        if dist < min_distance:
-                            min_distance = dist
-                            nearest_station = station
-
+                    nearest_station, dist_meters = find_nearest_station(v_lat, v_lon)
                     if nearest_station:
                         vehicle["nearest_station"] = nearest_station["name"]
-                        vehicle["distance_to_station"] = round(min_distance * 111000, 2)
+                        vehicle["distance_to_station"] = round(dist_meters, 2)
 
                 ctrain_vehicles.append(vehicle)
 
@@ -577,7 +646,8 @@ async def get_realtime_bus_positions_with_routes(
     debug_unmatched: bool = False,  # Add this parameter
 ) -> List[Dict]:
     """
-    Fetch bus vehicle positions and enrich with route info using static GTFS
+    Fetch bus vehicle positions and enrich with route info using static GTFS.
+    Uses C-Train track geometry to accurately filter out trains.
 
     Args:
         route_category: Filter by category (BRT, REGULAR, EXPRESS)
@@ -591,31 +661,69 @@ async def get_realtime_bus_positions_with_routes(
         # Load static GTFS data
         trip_to_route_static, route_info_static = load_static_gtfs_data()
 
-        # Fetch vehicle positions
-        vehicles = await get_realtime_vehicle_positions()
+        # Fetch vehicle positions AND C-Train track geometry
+        vehicles, track_data = await asyncio.gather(
+            get_realtime_vehicle_positions(),
+            get_lrt_tracks_from_gtfs(None),  # Get C-Train track geometry
+        )
 
         print(f"📋 Processing {len(vehicles)} vehicles for bus identification")
         print(
             f"📊 Static GTFS: {len(trip_to_route_static)} trip mappings, {len(route_info_static)} routes"
         )
 
-        # Get LRT station coordinates for filtering out C-Trains
-        lrt_stations = await get_lrt_stations_sorted_geojson(None)
-        lrt_coords = []
-        for feature in lrt_stations.features:
-            if feature.geometry.type == "Point":
-                lon, lat = feature.geometry.coordinates
-                lrt_coords.append({"lat": lat, "lon": lon})
+        # Extract C-Train track coordinates for filtering
+        red_track_coords = []
+        blue_track_coords = []
+        for feature in track_data.features:
+            if feature.geometry.type == "LineString":
+                line_name = feature.properties.get("line", "")
+                coords = feature.geometry.coordinates
+                if line_name == "RED":
+                    red_track_coords.extend(coords)
+                elif line_name == "BLUE":
+                    blue_track_coords.extend(coords)
 
-        def distance(lat1, lon1, lat2, lon2):
+        print(
+            f"🛤️ C-Train tracks loaded - Red: {len(red_track_coords)}, Blue: {len(blue_track_coords)} points"
+        )
+
+        def point_distance(lat1, lon1, lat2, lon2):
+            """Calculate distance between two points (in degrees)"""
             return ((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) ** 0.5
 
-        def is_near_lrt_station(lat, lon):
-            """Check if position is near any LRT station"""
-            for station in lrt_coords:
-                if distance(lat, lon, station["lat"], station["lon"]) < 0.006:
-                    return True
-            return False
+        def point_to_line_segment_distance(px, py, x1, y1, x2, y2):
+            """Calculate perpendicular distance from point to line segment"""
+            dx = x2 - x1
+            dy = y2 - y1
+            if dx == 0 and dy == 0:
+                return point_distance(py, px, y1, x1)
+            t = max(0, min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
+            closest_x = x1 + t * dx
+            closest_y = y1 + t * dy
+            return point_distance(py, px, closest_y, closest_x)
+
+        def is_on_ctrain_tracks(v_lat, v_lon, threshold_meters=40):
+            """
+            Check if a vehicle is on C-Train tracks.
+            Returns True if within threshold_meters of any track.
+            """
+            all_tracks = red_track_coords + blue_track_coords
+            if not all_tracks or len(all_tracks) < 2:
+                return False
+
+            min_dist = float("inf")
+            for i in range(len(all_tracks) - 1):
+                lon1, lat1 = all_tracks[i]
+                lon2, lat2 = all_tracks[i + 1]
+                dist = point_to_line_segment_distance(
+                    v_lon, v_lat, lon1, lat1, lon2, lat2
+                )
+                if dist < min_dist:
+                    min_dist = dist
+
+            dist_meters = min_dist * 111000
+            return dist_meters < threshold_meters
 
         def classify_bus_route(route_id_str, route_info=None):
             """
@@ -695,14 +803,14 @@ async def get_realtime_bus_positions_with_routes(
             if v_lat is None or v_lon is None:
                 continue
 
-            # Skip if near LRT station (likely C-Train)
-            if is_near_lrt_station(v_lat, v_lon):
-                filtered_ctrain_count += 1
-                continue
-
             # Skip if route_id indicates C-Train
             vehicle_route_id = vehicle.get("route_id")
             if vehicle_route_id in ["201", "202"]:
+                filtered_ctrain_count += 1
+                continue
+
+            # Skip if vehicle is ON the C-Train tracks (more accurate than station proximity)
+            if is_on_ctrain_tracks(v_lat, v_lon):
                 filtered_ctrain_count += 1
                 continue
 

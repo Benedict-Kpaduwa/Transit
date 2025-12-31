@@ -1,16 +1,35 @@
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import type { Station, RouteLine } from "@/types";
+import type { Station, RouteLine, CTrainPosition } from "@/types";
 import { useTrainSimulation } from "@/hooks/useTrainSimulation";
+import { useCTrainPositionsByLine, useBusStops } from "@/hooks/queries";
 import TrainControls from "./TrainControls";
-import { Zap, X, Navigation, Loader2 } from "lucide-react";
+import {
+  Zap,
+  X,
+  Navigation,
+  Loader2,
+  Radio,
+  Wifi,
+  WifiOff,
+  Bus,
+} from "lucide-react";
 import { MapContext } from "@/context/map-context";
 import MapSearch from "@/components/map/map-search";
 import MapStyles from "@/components/map/map-styles";
 import MapControls from "@/components/map/map-controls";
-import Train3DLayer from "@/components/map/train-3d-layer";
+import Train3DLayer, {
+  type TrainPositionData,
+} from "@/components/map/train-3d-layer";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
+import { useTheme } from "@/stores/use-theme-store";
+
+// Map themes to Mapbox styles
+const MAPBOX_STYLES = {
+  dark: "mapbox://styles/mapbox/dark-v11",
+  light: "mapbox://styles/mapbox/light-v11",
+} as const;
 
 interface MapComponentProps {
   stations: Station[];
@@ -44,7 +63,79 @@ const Map = ({
   const [isLocating, setIsLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
+  // Real-time train data toggle
+  const [useRealTimeData, setUseRealTimeData] = useState(true);
+
+  // Bus stops visibility toggle
+  const [showBusStops, setShowBusStops] = useState(false);
+
+  // Theme for map style
+  const { resolvedTheme } = useTheme();
+
   const mapboxToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+  // Fetch bus stops (cached for 1 hour)
+  const { data: busStops } = useBusStops({ enabled: showBusStops });
+
+  // Fetch real-time C-Train positions (auto-refreshes every 10 seconds)
+  const {
+    data: realTimeTrains,
+    isLoading: isLoadingTrains,
+    isError: isTrainError,
+    isFetching: isFetchingTrains,
+  } = useCTrainPositionsByLine({
+    refetchInterval: 10000, // Refresh every 10 seconds
+    enabled: useRealTimeData && mapLoaded, // Only fetch when using real-time data and map is loaded
+  });
+
+  // Transform API data to the format expected by Train3DLayer
+  const transformedRedTrains = useMemo((): TrainPositionData[] => {
+    if (!realTimeTrains?.red) return [];
+    return realTimeTrains.red
+      .filter(
+        (train: CTrainPosition) =>
+          train.vehicle_id &&
+          train.position &&
+          typeof train.position.longitude === "number" &&
+          typeof train.position.latitude === "number" &&
+          !isNaN(train.position.longitude) &&
+          !isNaN(train.position.latitude)
+      )
+      .map((train: CTrainPosition) => ({
+        id: train.vehicle_id,
+        lng: train.position.longitude,
+        lat: train.position.latitude,
+        bearing: train.position.bearing || 0,
+        nearestStation: train.nearest_station,
+        vehicleId: train.vehicle_id,
+      }));
+  }, [realTimeTrains?.red]);
+
+  const transformedBlueTrains = useMemo((): TrainPositionData[] => {
+    if (!realTimeTrains?.blue) return [];
+    return realTimeTrains.blue
+      .filter(
+        (train: CTrainPosition) =>
+          train.vehicle_id &&
+          train.position &&
+          typeof train.position.longitude === "number" &&
+          typeof train.position.latitude === "number" &&
+          !isNaN(train.position.longitude) &&
+          !isNaN(train.position.latitude)
+      )
+      .map((train: CTrainPosition) => ({
+        id: train.vehicle_id,
+        lng: train.position.longitude,
+        lat: train.position.latitude,
+        bearing: train.position.bearing || 0,
+        nearestStation: train.nearest_station,
+        vehicleId: train.vehicle_id,
+      }));
+  }, [realTimeTrains?.blue]);
+
+  // Check if real-time data is available
+  const hasRealTimeData =
+    transformedRedTrains.length > 0 || transformedBlueTrains.length > 0;
 
   const redStations = useMemo(
     () => stations.filter((s) => s.line === "Red"),
@@ -75,7 +166,7 @@ const Map = ({
 
     mapboxgl.accessToken = mapboxToken;
     const map = new mapboxgl.Map({
-      style: "mapbox://styles/mapbox/dark-v11",
+      style: MAPBOX_STYLES[resolvedTheme],
       container: mapContainerRef.current,
       center: MAP_CONSTANTS.CENTER,
       antialias: true,
@@ -88,12 +179,14 @@ const Map = ({
 
     map.on("load", () => {
       setMapLoaded(true);
-      setupMapLayers(map, routeLines);
+      setupMapLayers(map, routeLines, resolvedTheme);
     });
 
-    // Re-add layers when style changes (e.g., from MapStyles component)
+    // Re-add layers when style changes (e.g., from MapStyles component or theme change)
     map.on("style.load", () => {
-      setupMapLayers(map, routeLines);
+      // Get the current theme from the store
+      const currentTheme = useTheme.getState().resolvedTheme;
+      setupMapLayers(map, routeLines, currentTheme);
     });
 
     return () => {
@@ -101,6 +194,19 @@ const Map = ({
       setMapInstance(null);
     };
   }, []);
+
+  // Update map style when theme changes
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+
+    const currentStyle = mapRef.current.getStyle()?.sprite;
+    const targetStyle = resolvedTheme === "dark" ? "dark-v11" : "light-v11";
+
+    // Only change if the style is different (check if current style contains the target)
+    if (currentStyle && !currentStyle.includes(targetStyle)) {
+      mapRef.current.setStyle(MAPBOX_STYLES[resolvedTheme]);
+    }
+  }, [resolvedTheme, mapLoaded]);
 
   // 3D train models are now handled by Train3DLayer component
   // The trainPosition updates are passed to the component via props
@@ -128,6 +234,173 @@ const Map = ({
       markersRef.current.push(marker);
     });
   }, [mapLoaded, stations]);
+
+  // Add/remove bus stops layer based on toggle
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current) return;
+    const map = mapRef.current;
+
+    // Remove existing bus stops layer and source if they exist
+    if (map.getLayer("bus-stops-layer")) {
+      map.removeLayer("bus-stops-layer");
+    }
+    if (map.getLayer("bus-stops-cluster-count")) {
+      map.removeLayer("bus-stops-cluster-count");
+    }
+    if (map.getLayer("bus-stops-clusters")) {
+      map.removeLayer("bus-stops-clusters");
+    }
+    if (map.getSource("bus-stops")) {
+      map.removeSource("bus-stops");
+    }
+
+    // If bus stops are disabled or no data, don't add anything
+    if (!showBusStops || !busStops || busStops.length === 0) return;
+
+    // Create GeoJSON from bus stops
+    const geojsonData: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: busStops.map((stop) => ({
+        type: "Feature" as const,
+        geometry: {
+          type: "Point" as const,
+          coordinates: stop.coords,
+        },
+        properties: {
+          id: stop.id,
+          name: stop.name,
+          code: stop.code,
+        },
+      })),
+    };
+
+    // Add source with clustering enabled
+    map.addSource("bus-stops", {
+      type: "geojson",
+      data: geojsonData,
+      cluster: true,
+      clusterMaxZoom: 14, // Max zoom to cluster points
+      clusterRadius: 50, // Radius of each cluster
+    });
+
+    // Add cluster circles layer
+    map.addLayer({
+      id: "bus-stops-clusters",
+      type: "circle",
+      source: "bus-stops",
+      filter: ["has", "point_count"],
+      paint: {
+        "circle-color": [
+          "step",
+          ["get", "point_count"],
+          "#51bbd6", // Blue for small clusters
+          100,
+          "#f1f075", // Yellow for medium clusters
+          750,
+          "#f28cb1", // Pink for large clusters
+        ],
+        "circle-radius": ["step", ["get", "point_count"], 20, 100, 30, 750, 40],
+        "circle-opacity": 0.8,
+      },
+    });
+
+    // Add cluster count labels
+    map.addLayer({
+      id: "bus-stops-cluster-count",
+      type: "symbol",
+      source: "bus-stops",
+      filter: ["has", "point_count"],
+      layout: {
+        "text-field": ["get", "point_count_abbreviated"],
+        "text-font": ["DIN Offc Pro Medium", "Arial Unicode MS Bold"],
+        "text-size": 12,
+      },
+      paint: {
+        "text-color": "#000",
+      },
+    });
+
+    // Add individual bus stop markers (unclustered points)
+    map.addLayer({
+      id: "bus-stops-layer",
+      type: "circle",
+      source: "bus-stops",
+      filter: ["!", ["has", "point_count"]],
+      paint: {
+        "circle-color": "#22c55e", // Green color for bus stops
+        "circle-radius": 5,
+        "circle-stroke-width": 1,
+        "circle-stroke-color": "#16a34a",
+        "circle-opacity": 0.9,
+      },
+      minzoom: 13, // Only show individual stops at zoom 13+
+    });
+
+    // Add popup on click for individual stops
+    map.on("click", "bus-stops-layer", (e) => {
+      if (!e.features || e.features.length === 0) return;
+      const feature = e.features[0];
+      const coordinates = (
+        feature.geometry as GeoJSON.Point
+      ).coordinates.slice() as [number, number];
+      const name = feature.properties?.name || "Bus Stop";
+      const code = feature.properties?.code || "";
+
+      new mapboxgl.Popup()
+        .setLngLat(coordinates)
+        .setHTML(
+          `
+          <div style="padding: 8px; font-family: system-ui;">
+            <strong style="font-size: 14px;">${name}</strong>
+            ${
+              code
+                ? `<p style="margin: 4px 0 0; font-size: 12px; color: #666;">Stop #${code}</p>`
+                : ""
+            }
+          </div>
+        `
+        )
+        .addTo(map);
+    });
+
+    // Change cursor on hover
+    map.on("mouseenter", "bus-stops-layer", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "bus-stops-layer", () => {
+      map.getCanvas().style.cursor = "";
+    });
+
+    // Zoom to cluster on click
+    map.on("click", "bus-stops-clusters", (e) => {
+      const features = map.queryRenderedFeatures(e.point, {
+        layers: ["bus-stops-clusters"],
+      });
+      if (!features.length) return;
+      const clusterId = features[0].properties?.cluster_id as
+        | number
+        | undefined;
+      if (clusterId === undefined) return;
+      const source = map.getSource("bus-stops") as mapboxgl.GeoJSONSource;
+      source.getClusterExpansionZoom(clusterId, (err, zoom) => {
+        if (err || zoom === undefined || zoom === null) return;
+        map.easeTo({
+          center: (features[0].geometry as GeoJSON.Point).coordinates as [
+            number,
+            number
+          ],
+          zoom,
+        });
+      });
+    });
+
+    map.on("mouseenter", "bus-stops-clusters", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "bus-stops-clusters", () => {
+      map.getCanvas().style.cursor = "";
+    });
+  }, [mapLoaded, showBusStops, busStops]);
 
   useEffect(() => {
     if (selectedStation && mapRef.current) {
@@ -275,8 +548,28 @@ const Map = ({
         {mapLoaded && use3DTrains && (
           <Train3DLayer
             map={mapInstance}
-            redTrainPosition={redTrain.trainPosition}
-            blueTrainPosition={blueTrain.trainPosition}
+            // Pass real-time data if available and enabled, otherwise use simulation
+            redTrains={
+              useRealTimeData && hasRealTimeData
+                ? transformedRedTrains
+                : undefined
+            }
+            blueTrains={
+              useRealTimeData && hasRealTimeData
+                ? transformedBlueTrains
+                : undefined
+            }
+            // Fallback to simulation when real data is not available
+            redTrainPosition={
+              !useRealTimeData || !hasRealTimeData
+                ? redTrain.trainPosition
+                : null
+            }
+            blueTrainPosition={
+              !useRealTimeData || !hasRealTimeData
+                ? blueTrain.trainPosition
+                : null
+            }
           />
         )}
 
@@ -359,7 +652,97 @@ const Map = ({
               />
             )}
           </button>
+
+          {/* Real-time Data Toggle */}
+          <button
+            onClick={() => setUseRealTimeData(!useRealTimeData)}
+            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+              useRealTimeData && hasRealTimeData
+                ? "bg-green-600/90 border-green-500 hover:bg-green-500"
+                : useRealTimeData && !hasRealTimeData
+                ? "bg-amber-600/90 border-amber-500 hover:bg-amber-500"
+                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
+            }`}
+            aria-label={
+              useRealTimeData
+                ? "Switch to simulation"
+                : "Switch to real-time data"
+            }
+          >
+            {isFetchingTrains ? (
+              <Loader2 className="w-5 h-5 text-white animate-spin" />
+            ) : useRealTimeData && hasRealTimeData ? (
+              <Wifi className="w-5 h-5 text-white" />
+            ) : useRealTimeData && !hasRealTimeData ? (
+              <WifiOff className="w-5 h-5 text-white" />
+            ) : (
+              <Radio className="w-5 h-5 text-zinc-300" />
+            )}
+          </button>
+
+          {/* Bus Stops Toggle */}
+          <button
+            onClick={() => setShowBusStops(!showBusStops)}
+            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+              showBusStops
+                ? "bg-green-600/90 border-green-500 hover:bg-green-500"
+                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
+            }`}
+            aria-label={showBusStops ? "Hide bus stops" : "Show bus stops"}
+            title={showBusStops ? "Hide bus stops" : "Show bus stops"}
+          >
+            <Bus
+              className={`w-5 h-5 ${
+                showBusStops ? "text-white" : "text-zinc-300"
+              }`}
+            />
+          </button>
         </div>
+
+        {/* Real-time Data Status Indicator */}
+        {mapLoaded && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
+            <div
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl backdrop-blur-sm border text-xs font-medium transition-all ${
+                useRealTimeData && hasRealTimeData
+                  ? "bg-green-900/80 border-green-700 text-green-200"
+                  : useRealTimeData && isLoadingTrains
+                  ? "bg-amber-900/80 border-amber-700 text-amber-200"
+                  : useRealTimeData && isTrainError
+                  ? "bg-red-900/80 border-red-700 text-red-200"
+                  : "bg-zinc-900/80 border-zinc-700 text-zinc-300"
+              }`}
+            >
+              {useRealTimeData && hasRealTimeData ? (
+                <>
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                  </span>
+                  <span>
+                    LIVE • {transformedRedTrains.length} Red,{" "}
+                    {transformedBlueTrains.length} Blue
+                  </span>
+                </>
+              ) : useRealTimeData && isLoadingTrains ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>Connecting to live data...</span>
+                </>
+              ) : useRealTimeData && isTrainError ? (
+                <>
+                  <WifiOff className="w-3 h-3" />
+                  <span>Live data unavailable • Using simulation</span>
+                </>
+              ) : (
+                <>
+                  <Radio className="w-3 h-3" />
+                  <span>SIMULATION MODE</span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Location Error Toast */}
         {locationError && (
@@ -418,12 +801,20 @@ const Map = ({
   );
 };
 
-function setupMapLayers(map: mapboxgl.Map, routeLines: RouteLine[]) {
+function setupMapLayers(
+  map: mapboxgl.Map,
+  routeLines: RouteLine[],
+  theme: "dark" | "light" = "dark"
+) {
   const layers = map.getStyle().layers;
   const labelLayerId = layers?.find(
     (layer) =>
       layer.type === "symbol" && layer.layout && layer.layout["text-field"]
   )?.id;
+
+  // Theme-aware building colors
+  const buildingColor = theme === "dark" ? "#444" : "#d1d5db";
+  const buildingOpacity = theme === "dark" ? 0.6 : 0.7;
 
   if (!map.getLayer("3d-buildings")) {
     map.addLayer(
@@ -435,10 +826,10 @@ function setupMapLayers(map: mapboxgl.Map, routeLines: RouteLine[]) {
         type: "fill-extrusion",
         minzoom: 15,
         paint: {
-          "fill-extrusion-color": "#444",
+          "fill-extrusion-color": buildingColor,
           "fill-extrusion-height": ["get", "height"],
           "fill-extrusion-base": ["get", "min_height"],
-          "fill-extrusion-opacity": 0.6,
+          "fill-extrusion-opacity": buildingOpacity,
         },
       },
       labelLayerId

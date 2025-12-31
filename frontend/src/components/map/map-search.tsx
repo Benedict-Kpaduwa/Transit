@@ -166,7 +166,7 @@ export default function MapSearch() {
 
   return (
     <>
-      <section className="absolute top-4 left-1/2 -translate-x-1/2 z-10 w-[90vw] sm:w-[400px] rounded-lg shadow-lg">
+      <section className="absolute top-16 left-1/2 -translate-x-1/2 z-10 w-[90vw] sm:w-[400px] rounded-lg shadow-lg">
         <Command className="rounded-lg">
           <div
             className={cn(

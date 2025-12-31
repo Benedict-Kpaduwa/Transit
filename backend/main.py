@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
+import uvicorn
 from config import settings
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -127,7 +128,7 @@ async def get_ctrains_geojson_endpoint(
 @app.get("/buses")
 async def get_buses(
     route_category: Optional[str] = Query(
-        None, description="Bus category: BRT, REGULAR, EXPRESS"
+        None, alias="category", description="Bus category: BRT, REGULAR, EXPRESS"
     ),
     route_id: Optional[str] = Query(
         None, description="Specific route ID (e.g., 301, 1, 10)"
@@ -155,7 +156,7 @@ async def get_buses(
 @app.get("/buses/geojson")
 async def get_buses_geojson_endpoint(
     route_category: Optional[str] = Query(
-        None, description="Bus category: BRT, REGULAR, EXPRESS"
+        None, alias="category", description="Bus category: BRT, REGULAR, EXPRESS"
     ),
     route_id: Optional[str] = Query(None, description="Specific route ID"),
 ):
@@ -414,6 +415,4 @@ async def health_check():
 
 
 if __name__ == "__main__":
-    import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=8000)

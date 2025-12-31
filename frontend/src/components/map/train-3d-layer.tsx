@@ -1,10 +1,23 @@
 import { useEffect, useRef, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
 
+export interface TrainPositionData {
+  id: string;
+  lng: number;
+  lat: number;
+  bearing: number;
+  nearestStation?: string;
+  vehicleId?: string;
+}
+
 interface Train3DLayerProps {
   map: mapboxgl.Map | null;
-  redTrainPosition: { lng: number; lat: number; bearing: number } | null;
-  blueTrainPosition: { lng: number; lat: number; bearing: number } | null;
+  // Support both single position (for simulation) and array (for real data)
+  redTrainPosition?: { lng: number; lat: number; bearing: number } | null;
+  blueTrainPosition?: { lng: number; lat: number; bearing: number } | null;
+  // New props for multiple real trains
+  redTrains?: TrainPositionData[];
+  blueTrains?: TrainPositionData[];
 }
 
 // Create a 3D-looking train marker element
@@ -147,10 +160,21 @@ export default function Train3DLayer({
   map,
   redTrainPosition,
   blueTrainPosition,
+  redTrains = [],
+  blueTrains = [],
 }: Train3DLayerProps) {
+  // Refs for single simulated markers (backwards compatibility)
   const redMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const blueMarkerRef = useRef<mapboxgl.Marker | null>(null);
+
+  // Refs for multiple real train markers
+  const redMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
+  const blueMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
+
   const styleAddedRef = useRef(false);
+
+  // Determine if we're using real data or simulation
+  const useRealData = redTrains.length > 0 || blueTrains.length > 0;
 
   // Add CSS styles for animations
   const addStyles = useCallback(() => {
@@ -194,9 +218,9 @@ export default function Train3DLayer({
     styleAddedRef.current = true;
   }, []);
 
-  // Initialize markers
+  // Initialize single markers for simulation mode
   useEffect(() => {
-    if (!map) return;
+    if (!map || useRealData) return;
 
     addStyles();
 
@@ -226,33 +250,147 @@ export default function Train3DLayer({
       redMarker.remove();
       blueMarker.remove();
     };
-  }, [map, addStyles]);
+  }, [map, addStyles, useRealData]);
 
-  // Update red train position
+  // Manage multiple red train markers for real data
   useEffect(() => {
+    if (!map || !useRealData) return;
+
+    addStyles();
+
+    // Filter out trains with invalid coordinates
+    const validTrains = redTrains.filter(
+      (t) =>
+        t.id &&
+        typeof t.lng === "number" &&
+        typeof t.lat === "number" &&
+        !isNaN(t.lng) &&
+        !isNaN(t.lat)
+    );
+
+    const currentIds = new Set(validTrains.map((t) => t.id));
+    const existingIds = new Set(redMarkersRef.current.keys());
+
+    // Remove markers that are no longer in the data
+    existingIds.forEach((id) => {
+      if (!currentIds.has(id)) {
+        const marker = redMarkersRef.current.get(id);
+        marker?.remove();
+        redMarkersRef.current.delete(id);
+      }
+    });
+
+    // Add or update markers
+    validTrains.forEach((train) => {
+      let marker = redMarkersRef.current.get(train.id);
+
+      if (!marker) {
+        // Create new marker with initial position
+        const el = createTrainMarkerElement("red");
+        marker = new mapboxgl.Marker({
+          element: el,
+          rotationAlignment: "map",
+          pitchAlignment: "map",
+        })
+          .setLngLat([train.lng, train.lat])
+          .addTo(map);
+        redMarkersRef.current.set(train.id, marker);
+      } else {
+        // Update position for existing marker
+        marker.setLngLat([train.lng, train.lat]);
+      }
+
+      marker.setRotation((train.bearing || 0) - 90);
+    });
+
+    return () => {
+      // Cleanup all markers on unmount
+      redMarkersRef.current.forEach((marker) => marker.remove());
+      redMarkersRef.current.clear();
+    };
+  }, [map, redTrains, useRealData, addStyles]);
+
+  // Manage multiple blue train markers for real data
+  useEffect(() => {
+    if (!map || !useRealData) return;
+
+    addStyles();
+
+    // Filter out trains with invalid coordinates
+    const validTrains = blueTrains.filter(
+      (t) =>
+        t.id &&
+        typeof t.lng === "number" &&
+        typeof t.lat === "number" &&
+        !isNaN(t.lng) &&
+        !isNaN(t.lat)
+    );
+
+    const currentIds = new Set(validTrains.map((t) => t.id));
+    const existingIds = new Set(blueMarkersRef.current.keys());
+
+    // Remove markers that are no longer in the data
+    existingIds.forEach((id) => {
+      if (!currentIds.has(id)) {
+        const marker = blueMarkersRef.current.get(id);
+        marker?.remove();
+        blueMarkersRef.current.delete(id);
+      }
+    });
+
+    // Add or update markers
+    validTrains.forEach((train) => {
+      let marker = blueMarkersRef.current.get(train.id);
+
+      if (!marker) {
+        // Create new marker with initial position
+        const el = createTrainMarkerElement("blue");
+        marker = new mapboxgl.Marker({
+          element: el,
+          rotationAlignment: "map",
+          pitchAlignment: "map",
+        })
+          .setLngLat([train.lng, train.lat])
+          .addTo(map);
+        blueMarkersRef.current.set(train.id, marker);
+      } else {
+        // Update position for existing marker
+        marker.setLngLat([train.lng, train.lat]);
+      }
+
+      marker.setRotation((train.bearing || 0) - 90);
+    });
+
+    return () => {
+      // Cleanup all markers on unmount
+      blueMarkersRef.current.forEach((marker) => marker.remove());
+      blueMarkersRef.current.clear();
+    };
+  }, [map, blueTrains, useRealData, addStyles]);
+
+  // Update single red train position (simulation mode)
+  useEffect(() => {
+    if (useRealData) return;
     if (redMarkerRef.current && redTrainPosition) {
       redMarkerRef.current.setLngLat([
         redTrainPosition.lng,
         redTrainPosition.lat,
       ]);
-      // Offset by -90 degrees because train marker faces right (east) by default
-      // but bearing 0° means north
       redMarkerRef.current.setRotation(redTrainPosition.bearing - 90);
     }
-  }, [redTrainPosition]);
+  }, [redTrainPosition, useRealData]);
 
-  // Update blue train position
+  // Update single blue train position (simulation mode)
   useEffect(() => {
+    if (useRealData) return;
     if (blueMarkerRef.current && blueTrainPosition) {
       blueMarkerRef.current.setLngLat([
         blueTrainPosition.lng,
         blueTrainPosition.lat,
       ]);
-      // Offset by -90 degrees because train marker faces right (east) by default
-      // but bearing 0° means north
       blueMarkerRef.current.setRotation(blueTrainPosition.bearing - 90);
     }
-  }, [blueTrainPosition]);
+  }, [blueTrainPosition, useRealData]);
 
   return null;
 }
