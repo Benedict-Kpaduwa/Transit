@@ -259,3 +259,158 @@ function transformRouteLines(geojson: GeoJSONFeatureCollection): RouteLine[] {
       },
     }));
 }
+
+// ============================================
+// Trip Planning API
+// ============================================
+
+export interface GeocodingResult {
+  name: string;
+  place_name: string;
+  coordinates: [number, number]; // [lng, lat]
+  type: string;
+}
+
+export interface NearbyStop {
+  stop_id: string;
+  stop_name: string;
+  stop_lat: number;
+  stop_lon: number;
+  distance: number;
+  is_lrt: boolean;
+}
+
+export interface TripSegment {
+  type: "walk" | "transit";
+  instruction: string;
+  distance?: number;
+  duration: number;
+  geometry?: {
+    type: string;
+    coordinates: [number, number][];
+  };
+  steps?: Array<{
+    instruction: string;
+    distance: number;
+    duration: number;
+  }>;
+  line?: string;
+  vehicle_type?: string;
+  color?: string;
+  route_id?: string;
+  num_stops?: number;
+  from: {
+    name: string;
+    coordinates: [number, number];
+  };
+  to: {
+    name: string;
+    coordinates: [number, number];
+  };
+}
+
+export interface TripPlan {
+  success: boolean;
+  error?: string;
+  suggestion?: string;
+  summary?: {
+    total_duration: number;
+    total_duration_text: string;
+    total_walking_distance: number;
+    total_walking_distance_text: string;
+    transit_line: string;
+    transit_type: string;
+  };
+  origin?: {
+    coordinates: [number, number];
+  };
+  destination?: {
+    coordinates: [number, number];
+  };
+  segments?: TripSegment[];
+  origin_stops?: NearbyStop[];
+  destination_stops?: NearbyStop[];
+}
+
+export const tripPlannerApi = {
+  /**
+   * Geocode an address or place name
+   */
+  geocode: async (
+    query: string,
+    proximity?: { lng: number; lat: number }
+  ): Promise<GeocodingResult[]> => {
+    try {
+      const params: Record<string, string | number> = { q: query };
+      if (proximity) {
+        params.proximity_lng = proximity.lng;
+        params.proximity_lat = proximity.lat;
+      }
+      const response = await api.get<{ query: string; results: GeocodingResult[] }>(
+        "/geocode",
+        { params }
+      );
+      return response.data.results;
+    } catch (error) {
+      console.error("Geocoding error:", error);
+      return [];
+    }
+  },
+
+  /**
+   * Find nearby transit stops
+   */
+  findNearbyStops: async (
+    lat: number,
+    lng: number,
+    options?: {
+      limit?: number;
+      maxDistance?: number;
+      stopType?: "LRT" | "BUS";
+    }
+  ): Promise<NearbyStop[]> => {
+    try {
+      const params: Record<string, string | number> = { lat, lng };
+      if (options?.limit) params.limit = options.limit;
+      if (options?.maxDistance) params.max_distance = options.maxDistance;
+      if (options?.stopType) params.stop_type = options.stopType;
+
+      const response = await api.get<{ location: { lat: number; lng: number }; stops: NearbyStop[] }>(
+        "/nearby-stops",
+        { params }
+      );
+      return response.data.stops;
+    } catch (error) {
+      console.error("Error finding nearby stops:", error);
+      return [];
+    }
+  },
+
+  /**
+   * Plan a trip between two locations
+   */
+  planTrip: async (
+    origin: { lng: number; lat: number },
+    destination: { lng: number; lat: number },
+    preferLrt: boolean = true
+  ): Promise<TripPlan> => {
+    try {
+      const params = {
+        origin_lng: origin.lng,
+        origin_lat: origin.lat,
+        dest_lng: destination.lng,
+        dest_lat: destination.lat,
+        prefer_lrt: preferLrt,
+      };
+
+      const response = await api.get<TripPlan>("/trip/plan", { params });
+      return response.data;
+    } catch (error) {
+      console.error("Trip planning error:", error);
+      return {
+        success: false,
+        error: "Failed to plan trip. Please try again.",
+      };
+    }
+  },
+};

@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
 
     calgary_app_token: Optional[str] = None
+    mapbox_access_token: Optional[str] = None
 
     # API endpoints
     lrt_routes_new_api: str = (
@@ -35,13 +36,20 @@ def print_config_status():
     print(
         f"App Token Configured: {'✅ Yes' if settings.calgary_app_token else '❌ No'}"
     )
+    print(
+        f"Mapbox Token Configured: {'✅ Yes' if settings.mapbox_access_token else '❌ No'}"
+    )
     print(f"Debug Mode: {'✅ On' if settings.debug else '❌ Off'}")
     print("=" * 50)
 
     if not settings.calgary_app_token:
         print("\n⚠️  WARNING: CALGARY_APP_TOKEN not set in environment variables")
         print("The new LRT API endpoint will not work without an app token.")
-        print("Create a .env file with CALGARY_APP_TOKEN=your_token_here")
+
+    if not settings.mapbox_access_token:
+        print("\n⚠️  WARNING: MAPBOX_ACCESS_TOKEN not set in environment variables")
+        print("Trip planning with geocoding will not work without a Mapbox token.")
+        print("Create a .env file with MAPBOX_ACCESS_TOKEN=your_token_here")
 
 
 # Print status when module is loaded

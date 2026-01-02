@@ -23,6 +23,12 @@ from services.calgary_transit import (
     get_stops_geojson,
     get_vehicles_geojson,
 )
+from services.trip_planner import (
+    geocode_address,
+    plan_trip,
+    find_nearest_stops,
+    load_stops_data,
+)
 
 app = FastAPI(title="Calgary Transit API", version="2.0.0")
 
@@ -407,11 +413,126 @@ async def health_check():
     return {
         "status": "healthy",
         "app_token_configured": bool(settings.calgary_app_token),
+        "mapbox_configured": bool(settings.mapbox_access_token),
         "features": {
             "station_sorting": "enabled",
             "route_generation": "enabled",
+            "trip_planning": bool(settings.mapbox_access_token),
         },
     }
+
+
+# ============================================
+# Trip Planning Endpoints
+# ============================================
+
+@app.get("/geocode")
+async def geocode(
+    q: str = Query(..., description="Search query (address, place name, etc.)"),
+    proximity_lng: Optional[float] = Query(None, description="Longitude for proximity bias"),
+    proximity_lat: Optional[float] = Query(None, description="Latitude for proximity bias"),
+):
+    """
+    Geocode an address or place name to coordinates
+    Uses Mapbox Geocoding API, results are biased to Calgary area
+    """
+    try:
+        proximity = None
+        if proximity_lng and proximity_lat:
+            proximity = (proximity_lng, proximity_lat)
+        
+        results = await geocode_address(q, proximity)
+        return {
+            "query": q,
+            "results": results,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Geocoding failed: {str(e)}")
+
+
+@app.get("/nearby-stops")
+async def nearby_stops(
+    lat: float = Query(..., description="Latitude"),
+    lng: float = Query(..., description="Longitude"),
+    limit: int = Query(5, description="Maximum number of stops to return"),
+    max_distance: float = Query(2000, description="Maximum distance in meters"),
+    stop_type: Optional[str] = Query(None, description="Filter by stop type: LRT or BUS"),
+):
+    """
+    Find transit stops near a location
+    """
+    try:
+        stops_df = load_stops_data()
+        stops = find_nearest_stops(
+            lat, lng, stops_df, 
+            limit=limit, 
+            max_distance=max_distance,
+            stop_type=stop_type.upper() if stop_type else None
+        )
+        return {
+            "location": {"lat": lat, "lng": lng},
+            "stops": stops,
+        }
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="GTFS data not loaded")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to find nearby stops: {str(e)}")
+
+
+@app.post("/trip/plan")
+async def trip_plan(
+    origin_lng: float = Query(..., description="Origin longitude"),
+    origin_lat: float = Query(..., description="Origin latitude"),
+    dest_lng: float = Query(..., description="Destination longitude"),
+    dest_lat: float = Query(..., description="Destination latitude"),
+    prefer_lrt: bool = Query(True, description="Prefer LRT over bus routes"),
+):
+    """
+    Plan a trip from origin to destination using Calgary Transit
+    Returns route segments including walking and transit directions
+    """
+    try:
+        result = await plan_trip(
+            origin_coords=(origin_lng, origin_lat),
+            destination_coords=(dest_lng, dest_lat),
+            prefer_lrt=prefer_lrt,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="GTFS data not loaded")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Trip planning failed: {str(e)}")
+
+
+@app.get("/trip/plan")
+async def trip_plan_get(
+    origin_lng: float = Query(..., description="Origin longitude"),
+    origin_lat: float = Query(..., description="Origin latitude"),
+    dest_lng: float = Query(..., description="Destination longitude"),
+    dest_lat: float = Query(..., description="Destination latitude"),
+    prefer_lrt: bool = Query(True, description="Prefer LRT over bus routes"),
+):
+    """
+    Plan a trip from origin to destination using Calgary Transit (GET version)
+    Returns route segments including walking and transit directions
+    """
+    try:
+        result = await plan_trip(
+            origin_coords=(origin_lng, origin_lat),
+            destination_coords=(dest_lng, dest_lat),
+            prefer_lrt=prefer_lrt,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="GTFS data not loaded")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Trip planning failed: {str(e)}")
 
 
 if __name__ == "__main__":

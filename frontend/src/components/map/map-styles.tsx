@@ -61,7 +61,14 @@ export default function MapStyles() {
   }, [resolvedTheme, map, activeStyle]);
 
   const toggleTheme = () => {
-    const newTheme = theme === "dark" ? "light" : theme === "light" ? "dark" : resolvedTheme === "dark" ? "light" : "dark";
+    const newTheme =
+      theme === "dark"
+        ? "light"
+        : theme === "light"
+        ? "dark"
+        : resolvedTheme === "dark"
+        ? "light"
+        : "dark";
     setTheme(newTheme);
   };
 
@@ -81,12 +88,14 @@ export default function MapStyles() {
           ))}
         </TabsList>
       </Tabs>
-      
+
       {/* Theme toggle button */}
       <button
         onClick={toggleTheme}
         className="p-2.5 bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-lg hover:bg-zinc-800 transition-all shadow-lg"
-        aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} mode`}
+        aria-label={`Switch to ${
+          resolvedTheme === "dark" ? "light" : "dark"
+        } mode`}
       >
         {resolvedTheme === "dark" ? (
           <Sun className="w-4 h-4 text-amber-400" />

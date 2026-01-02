@@ -5,6 +5,8 @@ import type { Station, RouteLine, CTrainPosition } from "@/types";
 import { useTrainSimulation } from "@/hooks/useTrainSimulation";
 import { useCTrainPositionsByLine, useBusStops } from "@/hooks/queries";
 import TrainControls from "./TrainControls";
+import TripPlanner from "./TripPlanner";
+import { type TripPlan } from "@/services/api";
 import {
   Zap,
   X,
@@ -68,6 +70,10 @@ const Map = ({
 
   // Bus stops visibility toggle
   const [showBusStops, setShowBusStops] = useState(false);
+
+  // Trip planning state
+  const [tripPlan, setTripPlan] = useState<TripPlan | null>(null);
+  const tripMarkersRef = useRef<mapboxgl.Marker[]>([]);
 
   // Theme for map style
   const { resolvedTheme } = useTheme();
@@ -477,6 +483,170 @@ const Map = ({
     };
   }, [mapLoaded, userLocation, createUserLocationEl]);
 
+  // Trip route visualization
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current) return;
+    const map = mapRef.current;
+
+    // Clear existing trip layers and markers
+    tripMarkersRef.current.forEach((m) => m.remove());
+    tripMarkersRef.current = [];
+
+    // Remove existing trip route layers
+    if (map.getLayer("trip-walk-route")) {
+      map.removeLayer("trip-walk-route");
+    }
+    if (map.getSource("trip-walk-route")) {
+      map.removeSource("trip-walk-route");
+    }
+
+    if (!tripPlan?.success || !tripPlan.segments) return;
+
+    // Collect all walking route coordinates
+    const walkingCoordinates: [number, number][][] = [];
+    const transitStops: Array<{
+      coords: [number, number];
+      name: string;
+      type: "origin" | "transit" | "destination";
+    }> = [];
+
+    tripPlan.segments.forEach((segment, index) => {
+      // Add walking route geometry
+      if (segment.type === "walk" && segment.geometry?.coordinates) {
+        walkingCoordinates.push(
+          segment.geometry.coordinates as [number, number][]
+        );
+      }
+
+      // Collect transit stops for markers
+      if (index === 0) {
+        transitStops.push({
+          coords: segment.from.coordinates,
+          name: segment.from.name,
+          type: "origin",
+        });
+      }
+      if (segment.type === "transit") {
+        transitStops.push({
+          coords: segment.from.coordinates,
+          name: segment.from.name,
+          type: "transit",
+        });
+        transitStops.push({
+          coords: segment.to.coordinates,
+          name: segment.to.name,
+          type: "transit",
+        });
+      }
+      if (index === tripPlan.segments!.length - 1) {
+        transitStops.push({
+          coords: segment.to.coordinates,
+          name: segment.to.name,
+          type: "destination",
+        });
+      }
+    });
+
+    // Add walking routes as a single source with multiple lines
+    if (walkingCoordinates.length > 0) {
+      const features = walkingCoordinates.map((coords) => ({
+        type: "Feature" as const,
+        geometry: {
+          type: "LineString" as const,
+          coordinates: coords,
+        },
+        properties: {},
+      }));
+
+      map.addSource("trip-walk-route", {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features,
+        },
+      });
+
+      map.addLayer({
+        id: "trip-walk-route",
+        type: "line",
+        source: "trip-walk-route",
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": "#6366f1",
+          "line-width": 4,
+          "line-dasharray": [2, 2],
+          "line-opacity": 0.8,
+        },
+      });
+    }
+
+    // Add markers for origin, transit stops, and destination
+    transitStops.forEach((stop) => {
+      const el = document.createElement("div");
+      el.className = "trip-marker";
+
+      if (stop.type === "origin") {
+        el.innerHTML = `
+          <div class="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center shadow-lg border-2 border-white">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+        `;
+      } else if (stop.type === "destination") {
+        el.innerHTML = `
+          <div class="w-8 h-8 bg-red-500 rounded-full flex items-center justify-center shadow-lg border-2 border-white">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+          </div>
+        `;
+      } else {
+        el.innerHTML = `
+          <div class="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center shadow-md border-2 border-white">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+          </div>
+        `;
+      }
+
+      const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
+        .setLngLat(stop.coords)
+        .setPopup(
+          new mapboxgl.Popup({ offset: 25 }).setHTML(
+            `<div class="p-2"><strong>${stop.name}</strong></div>`
+          )
+        )
+        .addTo(map);
+
+      tripMarkersRef.current.push(marker);
+    });
+
+    // Fit bounds to show the entire route
+    if (tripPlan.origin && tripPlan.destination) {
+      const bounds = new mapboxgl.LngLatBounds();
+      bounds.extend(tripPlan.origin.coordinates);
+      bounds.extend(tripPlan.destination.coordinates);
+
+      // Extend with all transit stops
+      transitStops.forEach((stop) => bounds.extend(stop.coords));
+
+      map.fitBounds(bounds, {
+        padding: { top: 100, bottom: 100, left: 400, right: 100 },
+        maxZoom: 15,
+        duration: 1500,
+      });
+    }
+  }, [mapLoaded, tripPlan]);
+
+  // Handle route calculation from TripPlanner
+  const handleRouteCalculated = useCallback((plan: TripPlan) => {
+    setTripPlan(plan);
+  }, []);
+
+  // Handle clearing route
+  const handleClearRoute = useCallback(() => {
+    setTripPlan(null);
+  }, []);
+
   // Get user location
   const getUserLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -575,6 +745,15 @@ const Map = ({
 
         {/* Map Search - top center */}
         {mapLoaded && <MapSearch />}
+
+        {/* Trip Planner - top left */}
+        {mapLoaded && (
+          <TripPlanner
+            userLocation={userLocation}
+            onRouteCalculated={handleRouteCalculated}
+            onClearRoute={handleClearRoute}
+          />
+        )}
 
         {/* Map Style Switcher - bottom left */}
         {mapLoaded && <MapStyles />}
