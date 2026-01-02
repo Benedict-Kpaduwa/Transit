@@ -24,10 +24,10 @@ from services.calgary_transit import (
     get_vehicles_geojson,
 )
 from services.trip_planner import (
-    geocode_address,
-    plan_trip,
     find_nearest_stops,
+    geocode_address,
     load_stops_data,
+    plan_trip,
 )
 
 app = FastAPI(title="Calgary Transit API", version="2.0.0")
@@ -426,11 +426,16 @@ async def health_check():
 # Trip Planning Endpoints
 # ============================================
 
+
 @app.get("/geocode")
 async def geocode(
     q: str = Query(..., description="Search query (address, place name, etc.)"),
-    proximity_lng: Optional[float] = Query(None, description="Longitude for proximity bias"),
-    proximity_lat: Optional[float] = Query(None, description="Latitude for proximity bias"),
+    proximity_lng: Optional[float] = Query(
+        None, description="Longitude for proximity bias"
+    ),
+    proximity_lat: Optional[float] = Query(
+        None, description="Latitude for proximity bias"
+    ),
 ):
     """
     Geocode an address or place name to coordinates
@@ -440,7 +445,7 @@ async def geocode(
         proximity = None
         if proximity_lng and proximity_lat:
             proximity = (proximity_lng, proximity_lat)
-        
+
         results = await geocode_address(q, proximity)
         return {
             "query": q,
@@ -458,7 +463,9 @@ async def nearby_stops(
     lng: float = Query(..., description="Longitude"),
     limit: int = Query(5, description="Maximum number of stops to return"),
     max_distance: float = Query(2000, description="Maximum distance in meters"),
-    stop_type: Optional[str] = Query(None, description="Filter by stop type: LRT or BUS"),
+    stop_type: Optional[str] = Query(
+        None, description="Filter by stop type: LRT or BUS"
+    ),
 ):
     """
     Find transit stops near a location
@@ -466,10 +473,12 @@ async def nearby_stops(
     try:
         stops_df = load_stops_data()
         stops = find_nearest_stops(
-            lat, lng, stops_df, 
-            limit=limit, 
+            lat,
+            lng,
+            stops_df,
+            limit=limit,
             max_distance=max_distance,
-            stop_type=stop_type.upper() if stop_type else None
+            stop_type=stop_type.upper() if stop_type else None,
         )
         return {
             "location": {"lat": lat, "lng": lng},
@@ -478,7 +487,9 @@ async def nearby_stops(
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="GTFS data not loaded")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to find nearby stops: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to find nearby stops: {str(e)}"
+        )
 
 
 @app.post("/trip/plan")

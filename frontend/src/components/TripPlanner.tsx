@@ -12,7 +12,12 @@ import {
   LocateFixed,
   Bus,
 } from "lucide-react";
-import { tripPlannerApi, type GeocodingResult, type TripPlan, type TripSegment } from "@/services/api";
+import {
+  tripPlannerApi,
+  type GeocodingResult,
+  type TripPlan,
+  type TripSegment,
+} from "@/services/api";
 import { useDebounce } from "@/hooks/useDebounce";
 import { cn } from "@/lib/utils";
 
@@ -57,7 +62,9 @@ function LocationInput({
 
   return (
     <div className="relative">
-      <label className="text-xs font-medium text-zinc-400 mb-1 block">{label}</label>
+      <label className="text-xs font-medium text-zinc-400 mb-1 block">
+        {label}
+      </label>
       <div className="relative">
         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">
           {icon}
@@ -119,8 +126,12 @@ function LocationInput({
               >
                 <MapPin className="w-4 h-4 text-zinc-400 mt-0.5 shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{result.name}</p>
-                  <p className="text-xs text-zinc-400 truncate">{result.place_name}</p>
+                  <p className="text-sm font-medium text-white truncate">
+                    {result.name}
+                  </p>
+                  <p className="text-xs text-zinc-400 truncate">
+                    {result.place_name}
+                  </p>
                 </div>
               </button>
             ))
@@ -131,7 +142,13 @@ function LocationInput({
   );
 }
 
-function TripSegmentCard({ segment, isLast }: { segment: TripSegment; isLast: boolean }) {
+function TripSegmentCard({
+  segment,
+  isLast,
+}: {
+  segment: TripSegment;
+  isLast: boolean;
+}) {
   const isWalk = segment.type === "walk";
   const isTrain = segment.vehicle_type === "CTrain";
 
@@ -142,10 +159,14 @@ function TripSegmentCard({ segment, isLast }: { segment: TripSegment; isLast: bo
         <div
           className={cn(
             "absolute left-5 top-12 w-0.5 h-[calc(100%-1rem)]",
-            isWalk ? "bg-zinc-600" : "bg-gradient-to-b",
+            isWalk ? "bg-zinc-600" : "bg-linear-to-b",
             !isWalk && segment.color === "#DC143C" && "from-red-500 to-red-500",
-            !isWalk && segment.color === "#0088FF" && "from-blue-500 to-blue-500",
-            !isWalk && segment.color === "#22c55e" && "from-green-500 to-green-500"
+            !isWalk &&
+              segment.color === "#0088FF" &&
+              "from-blue-500 to-blue-500",
+            !isWalk &&
+              segment.color === "#22c55e" &&
+              "from-green-500 to-green-500"
           )}
         />
       )}
@@ -175,7 +196,9 @@ function TripSegmentCard({ segment, isLast }: { segment: TripSegment; isLast: bo
 
         {/* Content */}
         <div className="flex-1 min-w-0 pb-4">
-          <p className="text-sm font-medium text-white">{segment.instruction}</p>
+          <p className="text-sm font-medium text-white">
+            {segment.instruction}
+          </p>
           <div className="flex items-center gap-3 mt-1 text-xs text-zinc-400">
             {segment.duration && (
               <span className="flex items-center gap-1">
@@ -184,7 +207,11 @@ function TripSegmentCard({ segment, isLast }: { segment: TripSegment; isLast: bo
               </span>
             )}
             {segment.distance && (
-              <span>{segment.distance < 1000 ? `${segment.distance} m` : `${(segment.distance / 1000).toFixed(1)} km`}</span>
+              <span>
+                {segment.distance < 1000
+                  ? `${segment.distance} m`
+                  : `${(segment.distance / 1000).toFixed(1)} km`}
+              </span>
             )}
             {segment.num_stops && <span>{segment.num_stops} stops</span>}
           </div>
@@ -197,15 +224,28 @@ function TripSegmentCard({ segment, isLast }: { segment: TripSegment; isLast: bo
   );
 }
 
-export default function TripPlanner({ userLocation, onRouteCalculated, onClearRoute }: TripPlannerProps) {
+export default function TripPlanner({
+  userLocation,
+  onRouteCalculated,
+  onClearRoute,
+}: TripPlannerProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [originQuery, setOriginQuery] = useState("");
   const [destQuery, setDestQuery] = useState("");
-  const [originCoords, setOriginCoords] = useState<{ lng: number; lat: number } | null>(null);
-  const [destCoords, setDestCoords] = useState<{ lng: number; lat: number } | null>(null);
-  const [useCurrentLocationForOrigin, setUseCurrentLocationForOrigin] = useState(false);
+  const [originCoords, setOriginCoords] = useState<{
+    lng: number;
+    lat: number;
+  } | null>(null);
+  const [destCoords, setDestCoords] = useState<{
+    lng: number;
+    lat: number;
+  } | null>(null);
+  const [useCurrentLocationForOrigin, setUseCurrentLocationForOrigin] =
+    useState(false);
 
-  const [originSuggestions, setOriginSuggestions] = useState<GeocodingResult[]>([]);
+  const [originSuggestions, setOriginSuggestions] = useState<GeocodingResult[]>(
+    []
+  );
   const [destSuggestions, setDestSuggestions] = useState<GeocodingResult[]>([]);
   const [isLoadingOrigin, setIsLoadingOrigin] = useState(false);
   const [isLoadingDest, setIsLoadingDest] = useState(false);
@@ -221,41 +261,60 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
   // Geocode origin query
   useEffect(() => {
     if (!debouncedOriginQuery || useCurrentLocationForOrigin) {
-      setOriginSuggestions([]);
       return;
     }
+
+    let cancelled = false;
 
     const searchOrigin = async () => {
       setIsLoadingOrigin(true);
       const results = await tripPlannerApi.geocode(
         debouncedOriginQuery,
-        userLocation ? { lng: userLocation.lng, lat: userLocation.lat } : undefined
+        userLocation
+          ? { lng: userLocation.lng, lat: userLocation.lat }
+          : undefined
       );
-      setOriginSuggestions(results);
-      setIsLoadingOrigin(false);
+      if (!cancelled) {
+        setOriginSuggestions(results);
+        setIsLoadingOrigin(false);
+      }
     };
 
     searchOrigin();
+
+    return () => {
+      cancelled = true;
+    };
   }, [debouncedOriginQuery, userLocation, useCurrentLocationForOrigin]);
 
   // Geocode destination query
   useEffect(() => {
+    // Skip if no query
     if (!debouncedDestQuery) {
-      setDestSuggestions([]);
       return;
     }
+
+    let cancelled = false;
 
     const searchDest = async () => {
       setIsLoadingDest(true);
       const results = await tripPlannerApi.geocode(
         debouncedDestQuery,
-        userLocation ? { lng: userLocation.lng, lat: userLocation.lat } : undefined
+        userLocation
+          ? { lng: userLocation.lng, lat: userLocation.lat }
+          : undefined
       );
-      setDestSuggestions(results);
-      setIsLoadingDest(false);
+      if (!cancelled) {
+        setDestSuggestions(results);
+        setIsLoadingDest(false);
+      }
     };
 
     searchDest();
+
+    return () => {
+      cancelled = true;
+    };
   }, [debouncedDestQuery, userLocation]);
 
   const handleUseCurrentLocation = useCallback(() => {
@@ -296,7 +355,13 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
     if (result.success) {
       onRouteCalculated(result);
     }
-  }, [originCoords, destCoords, userLocation, useCurrentLocationForOrigin, onRouteCalculated]);
+  }, [
+    originCoords,
+    destCoords,
+    userLocation,
+    useCurrentLocationForOrigin,
+    onRouteCalculated,
+  ]);
 
   const handleClear = useCallback(() => {
     setOriginQuery("");
@@ -313,7 +378,7 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
     (originCoords && destCoords);
 
   return (
-    <div className="absolute top-4 left-4 z-20 w-[360px]">
+    <div className="absolute top-16 right-20 z-20 w-[360px]">
       {/* Collapsed state */}
       {!isExpanded && (
         <button
@@ -325,7 +390,9 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
           </div>
           <div className="text-left">
             <p className="text-sm font-medium text-white">Plan a Trip</p>
-            <p className="text-xs text-zinc-400">Get directions with Calgary Transit</p>
+            <p className="text-xs text-zinc-400">
+              Get directions with Calgary Transit
+            </p>
           </div>
           <ChevronRight className="w-5 h-5 text-zinc-500 ml-auto group-hover:translate-x-1 transition-transform" />
         </button>
@@ -343,6 +410,7 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
             <button
               onClick={() => setIsExpanded(false)}
               className="p-1 hover:bg-zinc-800 rounded-lg transition-colors"
+              aria-label="Close trip planner"
             >
               <X className="w-4 h-4 text-zinc-400" />
             </button>
@@ -358,16 +426,21 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
                 setOriginQuery(val);
                 setUseCurrentLocationForOrigin(false);
                 setOriginCoords(null);
+                if (!val) setOriginSuggestions([]);
               }}
               onSelect={handleOriginSelect}
-              onUseCurrentLocation={userLocation ? handleUseCurrentLocation : undefined}
+              onUseCurrentLocation={
+                userLocation ? handleUseCurrentLocation : undefined
+              }
               icon={<div className="w-2 h-2 rounded-full bg-green-500" />}
               isCurrentLocation={useCurrentLocationForOrigin}
               suggestions={originSuggestions}
               isLoading={isLoadingOrigin}
               showSuggestions={showOriginSuggestions}
               onFocus={() => setShowOriginSuggestions(true)}
-              onBlur={() => setTimeout(() => setShowOriginSuggestions(false), 200)}
+              onBlur={() =>
+                setTimeout(() => setShowOriginSuggestions(false), 200)
+              }
             />
 
             <LocationInput
@@ -377,6 +450,7 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
               onChange={(val) => {
                 setDestQuery(val);
                 setDestCoords(null);
+                if (!val) setDestSuggestions([]);
               }}
               onSelect={handleDestSelect}
               icon={<div className="w-2 h-2 rounded-full bg-red-500" />}
@@ -384,7 +458,9 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
               isLoading={isLoadingDest}
               showSuggestions={showDestSuggestions}
               onFocus={() => setShowDestSuggestions(true)}
-              onBlur={() => setTimeout(() => setShowDestSuggestions(false), 200)}
+              onBlur={() =>
+                setTimeout(() => setShowDestSuggestions(false), 200)
+              }
             />
 
             <div className="flex gap-2 pt-2">
@@ -432,7 +508,9 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
                       </div>
                       <div className="flex items-center gap-2 text-xs text-zinc-400">
                         <Footprints className="w-3 h-3" />
-                        <span>{tripPlan.summary.total_walking_distance_text} walk</span>
+                        <span>
+                          {tripPlan.summary.total_walking_distance_text} walk
+                        </span>
                       </div>
                     </div>
                     <p className="text-xs text-zinc-400 mt-1">
@@ -455,7 +533,9 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
                 <div className="px-4 py-6 text-center">
                   <p className="text-sm text-red-400">{tripPlan.error}</p>
                   {tripPlan.suggestion && (
-                    <p className="text-xs text-zinc-400 mt-2">{tripPlan.suggestion}</p>
+                    <p className="text-xs text-zinc-400 mt-2">
+                      {tripPlan.suggestion}
+                    </p>
                   )}
                 </div>
               )}
@@ -466,4 +546,3 @@ export default function TripPlanner({ userLocation, onRouteCalculated, onClearRo
     </div>
   );
 }
-

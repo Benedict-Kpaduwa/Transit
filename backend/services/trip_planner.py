@@ -290,8 +290,51 @@ def find_transit_route(
     # Determine vehicle type and line
     if route_type == 0:  # Light Rail
         vehicle_type = "CTrain"
+        # Default based on route_id
         line = "Red Line" if route_id == "201" else "Blue Line"
         color = "#DC143C" if route_id == "201" else "#0088FF"
+
+        # Override based on destination station name (more accurate)
+        dest_name = destination_stop.get("stop_name", "").lower()
+        red_stations = [
+            "tuscany",
+            "crowfoot",
+            "dalhousie",
+            "brentwood",
+            "university",
+            "lions park",
+            "sait",
+            "banff trail",
+            "sunnyside",
+            "heritage",
+            "southland",
+            "anderson",
+            "canyon meadows",
+            "fish creek",
+            "shawnessy",
+            "somerset",
+            "bridlewood",
+        ]
+        blue_stations = [
+            "69 street",
+            "sirocco",
+            "westbrook",
+            "shaganappi",
+            "sunalta",
+            "rundle",
+            "whitehorn",
+            "mcknight",
+            "martindale",
+            "saddletowne",
+            "franklin",
+        ]
+
+        if any(s in dest_name for s in red_stations):
+            line = "Red Line"
+            color = "#DC143C"
+        elif any(s in dest_name for s in blue_stations):
+            line = "Blue Line"
+            color = "#0088FF"
     else:  # Bus
         vehicle_type = "Bus"
         line = f"Route {route_short_name}"

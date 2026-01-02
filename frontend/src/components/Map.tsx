@@ -746,7 +746,7 @@ const Map = ({
         {/* Map Search - top center */}
         {mapLoaded && <MapSearch />}
 
-        {/* Trip Planner - top left */}
+        {/* Trip Planner - top right, beside search */}
         {mapLoaded && (
           <TripPlanner
             userLocation={userLocation}
@@ -761,8 +761,8 @@ const Map = ({
         {/* Zoom Controls - bottom right */}
         {mapLoaded && <MapControls />}
 
-        {/* Train Following Controls */}
-        <div className="absolute bottom-32 left-8 flex flex-col gap-2 rounded-2xl z-10">
+        {/* Train Following Controls - positioned below TrainControls on the left */}
+        <div className="absolute bottom-20 left-7 flex flex-col gap-2 rounded-2xl z-10">
           <button
             onClick={() =>
               setFollowingTrain(followingTrain === "Red" ? null : "Red")
