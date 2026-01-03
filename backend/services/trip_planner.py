@@ -5,7 +5,7 @@ Provides route planning functionality using GTFS data and Mapbox APIs
 
 import math
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 import pandas as pd
@@ -230,6 +230,46 @@ async def get_walking_directions(
                     for step in leg.get("steps", [])
                 ],
             }
+        return None
+
+
+async def get_driving_directions(
+    origin: Tuple[float, float],  # [lng, lat]
+    destination: Tuple[float, float],  # [lng, lat]
+) -> Optional[Dict]:
+    """
+    Get driving directions between two points using Mapbox Directions API
+    Used for bus routes to follow actual roads
+    """
+    if not settings.mapbox_access_token:
+        return None
+
+    coords = f"{origin[0]},{origin[1]};{destination[0]},{destination[1]}"
+    # Use driving profile which follows roads (similar to how buses travel)
+    url = f"https://api.mapbox.com/directions/v5/mapbox/driving/{coords}"
+
+    params = {
+        "access_token": settings.mapbox_access_token,
+        "geometries": "geojson",
+        "overview": "full",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            routes = data.get("routes", [])
+            if routes:
+                route = routes[0]
+                return {
+                    "distance": route.get("distance", 0),  # meters
+                    "duration": route.get("duration", 0),  # seconds
+                    "geometry": route.get("geometry", {}),
+                }
+            return None
+    except Exception:
         return None
 
 
@@ -487,29 +527,44 @@ async def plan_trip(
     transit_time_per_stop = 120 if best_route["vehicle_type"] == "CTrain" else 180
     transit_duration = best_route["num_stops"] * transit_time_per_stop
 
-    segments.append(
-        {
-            "type": "transit",
-            "instruction": f"Take {best_route['line']} ({best_route['vehicle_type']})",
-            "line": best_route["line"],
-            "vehicle_type": best_route["vehicle_type"],
-            "color": best_route["color"],
-            "route_id": best_route["route_id"],
-            "num_stops": best_route["num_stops"],
-            "duration": transit_duration,
-            "from": {
-                "name": best_origin_stop["stop_name"],
-                "coordinates": [
-                    best_origin_stop["stop_lon"],
-                    best_origin_stop["stop_lat"],
-                ],
-            },
-            "to": {
-                "name": best_dest_stop["stop_name"],
-                "coordinates": [best_dest_stop["stop_lon"], best_dest_stop["stop_lat"]],
-            },
-        }
-    )
+    # Get road geometry for bus routes (so they follow roads on the map)
+    transit_geometry = None
+    if best_route["vehicle_type"] != "CTrain":
+        # For buses, get driving directions to follow roads
+        bus_route = await get_driving_directions(
+            (best_origin_stop["stop_lon"], best_origin_stop["stop_lat"]),
+            (best_dest_stop["stop_lon"], best_dest_stop["stop_lat"]),
+        )
+        if bus_route:
+            transit_geometry = bus_route["geometry"]
+
+    transit_segment = {
+        "type": "transit",
+        "instruction": f"Take {best_route['line']} ({best_route['vehicle_type']})",
+        "line": best_route["line"],
+        "vehicle_type": best_route["vehicle_type"],
+        "color": best_route["color"],
+        "route_id": best_route["route_id"],
+        "num_stops": best_route["num_stops"],
+        "duration": transit_duration,
+        "from": {
+            "name": best_origin_stop["stop_name"],
+            "coordinates": [
+                best_origin_stop["stop_lon"],
+                best_origin_stop["stop_lat"],
+            ],
+        },
+        "to": {
+            "name": best_dest_stop["stop_name"],
+            "coordinates": [best_dest_stop["stop_lon"], best_dest_stop["stop_lat"]],
+        },
+    }
+
+    # Add geometry for bus routes
+    if transit_geometry:
+        transit_segment["geometry"] = transit_geometry
+
+    segments.append(transit_segment)
     total_duration += transit_duration
 
     # Segment 3: Walk from transit stop to destination
@@ -517,7 +572,7 @@ async def plan_trip(
         segments.append(
             {
                 "type": "walk",
-                "instruction": f"Walk to your destination",
+                "instruction": "Walk to your destination",
                 "distance": walk_from_stop["distance"],
                 "duration": walk_from_stop["duration"],
                 "geometry": walk_from_stop["geometry"],

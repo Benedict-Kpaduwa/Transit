@@ -16,6 +16,8 @@ import {
   Wifi,
   WifiOff,
   Bus,
+  Train,
+  Play,
 } from "lucide-react";
 import { MapContext } from "@/context/map-context";
 import MapSearch from "@/components/map/map-search";
@@ -65,11 +67,17 @@ const Map = ({
   const [isLocating, setIsLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
-  // Real-time train data toggle
-  const [useRealTimeData, setUseRealTimeData] = useState(true);
+  // Live trains visibility toggle (hidden by default)
+  const [showLiveTrains, setShowLiveTrains] = useState(false);
+
+  // Simulation visibility toggle (hidden by default)
+  const [showSimulation, setShowSimulation] = useState(false);
 
   // Bus stops visibility toggle
   const [showBusStops, setShowBusStops] = useState(false);
+
+  // Train lines visibility toggle (hidden by default, shown when directions active)
+  const [showTrainLines, setShowTrainLines] = useState(false);
 
   // Trip planning state
   const [tripPlan, setTripPlan] = useState<TripPlan | null>(null);
@@ -91,7 +99,7 @@ const Map = ({
     isFetching: isFetchingTrains,
   } = useCTrainPositionsByLine({
     refetchInterval: 10000, // Refresh every 10 seconds
-    enabled: useRealTimeData && mapLoaded, // Only fetch when using real-time data and map is loaded
+    enabled: showLiveTrains && mapLoaded, // Only fetch when live trains toggle is on
   });
 
   // Transform API data to the format expected by Train3DLayer
@@ -185,14 +193,16 @@ const Map = ({
 
     map.on("load", () => {
       setMapLoaded(true);
-      setupMapLayers(map, routeLines, resolvedTheme);
+      // Initial setup - train lines hidden by default
+      setupMapLayers(map, routeLines, resolvedTheme, false);
     });
 
     // Re-add layers when style changes (e.g., from MapStyles component or theme change)
     map.on("style.load", () => {
       // Get the current theme from the store
       const currentTheme = useTheme.getState().resolvedTheme;
-      setupMapLayers(map, routeLines, currentTheme);
+      // Preserve current showTrainLines state on style changes
+      setupMapLayers(map, routeLines, currentTheme, false);
     });
 
     return () => {
@@ -213,6 +223,68 @@ const Map = ({
       mapRef.current.setStyle(MAPBOX_STYLES[resolvedTheme]);
     }
   }, [resolvedTheme, mapLoaded]);
+
+  // Update train lines visibility when toggle changes or trip is active
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    const map = mapRef.current;
+
+    // Check if trip has transit segments (CTrain)
+    const tripHasCTrain = tripPlan?.segments?.some(
+      (s) => s.type === "transit" && s.vehicle_type === "CTrain"
+    );
+
+    // Show train lines if manually toggled OR if trip has CTrain directions
+    const shouldShowLines = showTrainLines || tripHasCTrain;
+
+    routeLines.forEach((route, index) => {
+      const layerId = `route-${index}`;
+
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(
+          layerId,
+          "visibility",
+          shouldShowLines ? "visible" : "none"
+        );
+      } else if (shouldShowLines) {
+        // Layer doesn't exist, need to create it
+        const layers = map.getStyle().layers;
+        const labelLayerId = layers?.find(
+          (layer) =>
+            layer.type === "symbol" &&
+            layer.layout &&
+            layer.layout["text-field"]
+        )?.id;
+
+        if (!map.getSource(layerId)) {
+          map.addSource(layerId, {
+            type: "geojson",
+            data: {
+              type: "Feature",
+              geometry: { type: "LineString", coordinates: route.coordinates },
+              properties: {},
+            },
+          });
+        }
+
+        map.addLayer(
+          {
+            id: layerId,
+            type: "line",
+            source: layerId,
+            layout: { "line-join": "round", "line-cap": "round" },
+            paint: {
+              "line-color":
+                route.properties.line === "RED" ? "#DC143C" : "#0088FF",
+              "line-width": 4,
+              "line-opacity": 0.8,
+            },
+          },
+          labelLayerId
+        );
+      }
+    });
+  }, [showTrainLines, tripPlan, mapLoaded, routeLines]);
 
   // 3D train models are now handled by Train3DLayer component
   // The trainPosition updates are passed to the component via props
@@ -483,6 +555,54 @@ const Map = ({
     };
   }, [mapLoaded, userLocation, createUserLocationEl]);
 
+  // Helper function to find the segment of track between two points
+  const getTrackSegment = useCallback(
+    (
+      fromCoords: [number, number],
+      toCoords: [number, number],
+      lineName: string
+    ): [number, number][] => {
+      // Find the route line for this train line
+      const targetLine = lineName.includes("Red") ? "RED" : "BLUE";
+      const trackLine = routeLines.find(
+        (r) => r.properties.line === targetLine
+      );
+
+      if (!trackLine || trackLine.coordinates.length < 2) {
+        return [fromCoords, toCoords]; // Fallback to direct line
+      }
+
+      const coords = trackLine.coordinates;
+
+      // Find closest point indices on the track for from and to
+      const findClosestIndex = (point: [number, number]): number => {
+        let closestIdx = 0;
+        let minDist = Infinity;
+        for (let i = 0; i < coords.length; i++) {
+          const dx = coords[i][0] - point[0];
+          const dy = coords[i][1] - point[1];
+          const dist = dx * dx + dy * dy;
+          if (dist < minDist) {
+            minDist = dist;
+            closestIdx = i;
+          }
+        }
+        return closestIdx;
+      };
+
+      const fromIdx = findClosestIndex(fromCoords);
+      const toIdx = findClosestIndex(toCoords);
+
+      // Extract the segment (handle both directions)
+      if (fromIdx <= toIdx) {
+        return coords.slice(fromIdx, toIdx + 1);
+      } else {
+        return coords.slice(toIdx, fromIdx + 1).reverse();
+      }
+    },
+    [routeLines]
+  );
+
   // Trip route visualization
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return;
@@ -499,15 +619,28 @@ const Map = ({
     if (map.getSource("trip-walk-route")) {
       map.removeSource("trip-walk-route");
     }
+    if (map.getLayer("trip-transit-route")) {
+      map.removeLayer("trip-transit-route");
+    }
+    if (map.getSource("trip-transit-route")) {
+      map.removeSource("trip-transit-route");
+    }
 
     if (!tripPlan?.success || !tripPlan.segments) return;
 
     // Collect all walking route coordinates
     const walkingCoordinates: [number, number][][] = [];
+    const transitRoutes: Array<{
+      coordinates: [number, number][];
+      color: string;
+      vehicleType: string;
+    }> = [];
     const transitStops: Array<{
       coords: [number, number];
       name: string;
       type: "origin" | "transit" | "destination";
+      vehicleType?: string;
+      color?: string;
     }> = [];
 
     tripPlan.segments.forEach((segment, index) => {
@@ -516,6 +649,45 @@ const Map = ({
         walkingCoordinates.push(
           segment.geometry.coordinates as [number, number][]
         );
+      }
+
+      // Add transit route geometry
+      if (segment.type === "transit") {
+        const fromCoords = segment.from.coordinates;
+        const toCoords = segment.to.coordinates;
+        // Default colors: CTrain Red=#DC143C, CTrain Blue=#0088FF, Bus=#22c55e
+        const color =
+          segment.color ||
+          (segment.vehicle_type === "CTrain"
+            ? segment.line?.includes("Red")
+              ? "#DC143C"
+              : "#0088FF"
+            : "#22c55e");
+
+        // For CTrain, use actual track coordinates
+        // For Bus, use geometry from backend if available, otherwise direct line
+        let routeCoordinates: [number, number][];
+
+        if (segment.vehicle_type === "CTrain") {
+          // Extract the segment of track between stations
+          routeCoordinates = getTrackSegment(
+            fromCoords,
+            toCoords,
+            segment.line || "Red Line"
+          );
+        } else if (segment.geometry?.coordinates) {
+          // Bus with road geometry from backend
+          routeCoordinates = segment.geometry.coordinates as [number, number][];
+        } else {
+          // Fallback to direct line
+          routeCoordinates = [fromCoords, toCoords];
+        }
+
+        transitRoutes.push({
+          coordinates: routeCoordinates,
+          color,
+          vehicleType: segment.vehicle_type || "Transit",
+        });
       }
 
       // Collect transit stops for markers
@@ -531,11 +703,15 @@ const Map = ({
           coords: segment.from.coordinates,
           name: segment.from.name,
           type: "transit",
+          vehicleType: segment.vehicle_type,
+          color: segment.color,
         });
         transitStops.push({
           coords: segment.to.coordinates,
           name: segment.to.name,
           type: "transit",
+          vehicleType: segment.vehicle_type,
+          color: segment.color,
         });
       }
       if (index === tripPlan.segments!.length - 1) {
@@ -583,8 +759,58 @@ const Map = ({
       });
     }
 
+    // Add transit routes with their specific colors
+    if (transitRoutes.length > 0) {
+      const features = transitRoutes.map((route) => ({
+        type: "Feature" as const,
+        geometry: {
+          type: "LineString" as const,
+          coordinates: route.coordinates,
+        },
+        properties: {
+          color: route.color,
+          vehicleType: route.vehicleType,
+        },
+      }));
+
+      map.addSource("trip-transit-route", {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features,
+        },
+      });
+
+      map.addLayer({
+        id: "trip-transit-route",
+        type: "line",
+        source: "trip-transit-route",
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": 6,
+          "line-opacity": 0.9,
+        },
+      });
+    }
+
     // Add markers for origin, transit stops, and destination
-    transitStops.forEach((stop) => {
+    // Filter to remove duplicates (same coords)
+    const uniqueStops = transitStops.filter(
+      (stop, index, self) =>
+        index ===
+        self.findIndex(
+          (s) =>
+            s.coords[0] === stop.coords[0] &&
+            s.coords[1] === stop.coords[1] &&
+            s.type === stop.type
+        )
+    );
+
+    uniqueStops.forEach((stop) => {
       const el = document.createElement("div");
       el.className = "trip-marker";
 
@@ -601,9 +827,16 @@ const Map = ({
           </div>
         `;
       } else {
+        // Transit stop - use vehicle-specific color and icon
+        const bgColor = stop.color || "#3b82f6"; // Default blue
+        const isTrain = stop.vehicleType === "CTrain";
+        const icon = isTrain
+          ? `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3.89V19h8V3.89C16 2.3 14.88 1 13.5 1h-3C9.12 1 8 2.3 8 3.89z"/><path d="M12 1v3"/><path d="M8 13h8"/><circle cx="10" cy="17" r="1"/><circle cx="14" cy="17" r="1"/><path d="M5 19h14l-1.5 4H6.5z"/></svg>`
+          : `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6v6"/><path d="M15 6v6"/><path d="M2 12h19.6"/><path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/></svg>`;
+
         el.innerHTML = `
-          <div class="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center shadow-md border-2 border-white">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+          <div class="w-6 h-6 rounded-full flex items-center justify-center shadow-md border-2 border-white" style="background-color: ${bgColor}">
+            ${icon}
           </div>
         `;
       }
@@ -612,7 +845,14 @@ const Map = ({
         .setLngLat(stop.coords)
         .setPopup(
           new mapboxgl.Popup({ offset: 25 }).setHTML(
-            `<div class="p-2"><strong>${stop.name}</strong></div>`
+            `<div class="p-2">
+              <strong>${stop.name}</strong>
+              ${
+                stop.vehicleType
+                  ? `<br/><span class="text-xs text-gray-500">${stop.vehicleType}</span>`
+                  : ""
+              }
+            </div>`
           )
         )
         .addTo(map);
@@ -714,32 +954,24 @@ const Map = ({
       <div className="flex-1 h-full relative bg-black overflow-hidden">
         <div ref={mapContainerRef} className="w-full h-full" />
 
-        {/* 3D Train Models */}
-        {mapLoaded && use3DTrains && (
+        {/* 3D Train Models - Only render when live trains or simulation is enabled */}
+        {mapLoaded && use3DTrains && (showLiveTrains || showSimulation) && (
           <Train3DLayer
             map={mapInstance}
-            // Pass real-time data if available and enabled, otherwise use simulation
+            // Pass real-time data only when live trains toggle is on
             redTrains={
-              useRealTimeData && hasRealTimeData
+              showLiveTrains && hasRealTimeData
                 ? transformedRedTrains
                 : undefined
             }
             blueTrains={
-              useRealTimeData && hasRealTimeData
+              showLiveTrains && hasRealTimeData
                 ? transformedBlueTrains
                 : undefined
             }
-            // Fallback to simulation when real data is not available
-            redTrainPosition={
-              !useRealTimeData || !hasRealTimeData
-                ? redTrain.trainPosition
-                : null
-            }
-            blueTrainPosition={
-              !useRealTimeData || !hasRealTimeData
-                ? blueTrain.trainPosition
-                : null
-            }
+            // Pass simulation data only when simulation toggle is on
+            redTrainPosition={showSimulation ? redTrain.trainPosition : null}
+            blueTrainPosition={showSimulation ? blueTrain.trainPosition : null}
           />
         )}
 
@@ -761,36 +993,42 @@ const Map = ({
         {/* Zoom Controls - bottom right */}
         {mapLoaded && <MapControls />}
 
-        {/* Train Following Controls - positioned below TrainControls on the left */}
-        <div className="absolute bottom-20 left-7 flex flex-col gap-2 rounded-2xl z-10">
-          <button
-            onClick={() =>
-              setFollowingTrain(followingTrain === "Red" ? null : "Red")
-            }
-            className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
-              followingTrain === "Red"
-                ? "bg-red-500 border-white text-white"
-                : "bg-black/80 border-red-500 text-red-500"
-            }`}
-          >
-            {followingTrain === "Red" ? "STOP FOLLOWING" : "FOLLOW RED TRAIN"}
-          </button>
-          <button
-            onClick={() =>
-              setFollowingTrain(followingTrain === "Blue" ? null : "Blue")
-            }
-            className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
-              followingTrain === "Blue"
-                ? "bg-blue-500 border-white text-white"
-                : "bg-black/80 border-blue-500 text-blue-500"
-            }`}
-          >
-            {followingTrain === "Blue" ? "STOP FOLLOWING" : "FOLLOW BLUE TRAIN"}
-          </button>
-        </div>
+        {/* Train Following Controls - Only show when live trains or simulation is active */}
+        {(showLiveTrains || showSimulation) && (
+          <div className="absolute bottom-20 left-7 flex flex-col gap-2 rounded-2xl z-10">
+            <button
+              onClick={() =>
+                setFollowingTrain(followingTrain === "Red" ? null : "Red")
+              }
+              className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
+                followingTrain === "Red"
+                  ? "bg-red-500 border-white text-white"
+                  : "bg-black/80 border-red-500 text-red-500"
+              }`}
+            >
+              {followingTrain === "Red" ? "STOP FOLLOWING" : "FOLLOW RED TRAIN"}
+            </button>
+            <button
+              onClick={() =>
+                setFollowingTrain(followingTrain === "Blue" ? null : "Blue")
+              }
+              className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
+                followingTrain === "Blue"
+                  ? "bg-blue-500 border-white text-white"
+                  : "bg-black/80 border-blue-500 text-blue-500"
+              }`}
+            >
+              {followingTrain === "Blue"
+                ? "STOP FOLLOWING"
+                : "FOLLOW BLUE TRAIN"}
+            </button>
+          </div>
+        )}
 
-        {/* Train Speed Controls */}
-        <TrainControls redTrain={redTrain} blueTrain={blueTrain} />
+        {/* Train Speed Controls - Only show when simulation is active */}
+        {showSimulation && (
+          <TrainControls redTrain={redTrain} blueTrain={blueTrain} />
+        )}
 
         {/* Map Action Buttons */}
         <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
@@ -832,31 +1070,48 @@ const Map = ({
             )}
           </button>
 
-          {/* Real-time Data Toggle */}
+          {/* Live Trains Toggle */}
           <button
-            onClick={() => setUseRealTimeData(!useRealTimeData)}
+            onClick={() => setShowLiveTrains(!showLiveTrains)}
             className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
-              useRealTimeData && hasRealTimeData
+              showLiveTrains && hasRealTimeData
                 ? "bg-green-600/90 border-green-500 hover:bg-green-500"
-                : useRealTimeData && !hasRealTimeData
+                : showLiveTrains && !hasRealTimeData
                 ? "bg-amber-600/90 border-amber-500 hover:bg-amber-500"
                 : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
             }`}
             aria-label={
-              useRealTimeData
-                ? "Switch to simulation"
-                : "Switch to real-time data"
+              showLiveTrains ? "Hide live trains" : "Show live trains"
             }
+            title={showLiveTrains ? "Hide live trains" : "Show live trains"}
           >
-            {isFetchingTrains ? (
+            {isFetchingTrains && showLiveTrains ? (
               <Loader2 className="w-5 h-5 text-white animate-spin" />
-            ) : useRealTimeData && hasRealTimeData ? (
+            ) : showLiveTrains && hasRealTimeData ? (
               <Wifi className="w-5 h-5 text-white" />
-            ) : useRealTimeData && !hasRealTimeData ? (
+            ) : showLiveTrains && !hasRealTimeData ? (
               <WifiOff className="w-5 h-5 text-white" />
             ) : (
               <Radio className="w-5 h-5 text-zinc-300" />
             )}
+          </button>
+
+          {/* Simulation Toggle */}
+          <button
+            onClick={() => setShowSimulation(!showSimulation)}
+            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+              showSimulation
+                ? "bg-orange-600/90 border-orange-500 hover:bg-orange-500"
+                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
+            }`}
+            aria-label={showSimulation ? "Stop simulation" : "Start simulation"}
+            title={showSimulation ? "Stop simulation" : "Start simulation"}
+          >
+            <Play
+              className={`w-5 h-5 ${
+                showSimulation ? "text-white" : "text-zinc-300"
+              }`}
+            />
           </button>
 
           {/* Bus Stops Toggle */}
@@ -876,23 +1131,45 @@ const Map = ({
               }`}
             />
           </button>
+
+          {/* Train Lines Toggle */}
+          <button
+            onClick={() => setShowTrainLines(!showTrainLines)}
+            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+              showTrainLines
+                ? "bg-purple-600/90 border-purple-500 hover:bg-purple-500"
+                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
+            }`}
+            aria-label={
+              showTrainLines ? "Hide train lines" : "Show train lines"
+            }
+            title={showTrainLines ? "Hide train lines" : "Show train lines"}
+          >
+            <Train
+              className={`w-5 h-5 ${
+                showTrainLines ? "text-white" : "text-zinc-300"
+              }`}
+            />
+          </button>
         </div>
 
-        {/* Real-time Data Status Indicator */}
-        {mapLoaded && (
+        {/* Train Status Indicator - Only show when live trains or simulation is active */}
+        {mapLoaded && (showLiveTrains || showSimulation) && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
             <div
               className={`flex items-center gap-2 px-4 py-2 rounded-xl backdrop-blur-sm border text-xs font-medium transition-all ${
-                useRealTimeData && hasRealTimeData
+                showLiveTrains && hasRealTimeData
                   ? "bg-green-900/80 border-green-700 text-green-200"
-                  : useRealTimeData && isLoadingTrains
+                  : showLiveTrains && isLoadingTrains
                   ? "bg-amber-900/80 border-amber-700 text-amber-200"
-                  : useRealTimeData && isTrainError
+                  : showLiveTrains && isTrainError
                   ? "bg-red-900/80 border-red-700 text-red-200"
+                  : showSimulation
+                  ? "bg-orange-900/80 border-orange-700 text-orange-200"
                   : "bg-zinc-900/80 border-zinc-700 text-zinc-300"
               }`}
             >
-              {useRealTimeData && hasRealTimeData ? (
+              {showLiveTrains && hasRealTimeData ? (
                 <>
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
@@ -903,22 +1180,25 @@ const Map = ({
                     {transformedBlueTrains.length} Blue
                   </span>
                 </>
-              ) : useRealTimeData && isLoadingTrains ? (
+              ) : showLiveTrains && isLoadingTrains ? (
                 <>
                   <Loader2 className="w-3 h-3 animate-spin" />
                   <span>Connecting to live data...</span>
                 </>
-              ) : useRealTimeData && isTrainError ? (
+              ) : showLiveTrains && isTrainError ? (
                 <>
                   <WifiOff className="w-3 h-3" />
-                  <span>Live data unavailable • Using simulation</span>
+                  <span>Live data unavailable</span>
                 </>
-              ) : (
+              ) : showSimulation ? (
                 <>
-                  <Radio className="w-3 h-3" />
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
+                  </span>
                   <span>SIMULATION MODE</span>
                 </>
-              )}
+              ) : null}
             </div>
           </div>
         )}
@@ -983,7 +1263,8 @@ const Map = ({
 function setupMapLayers(
   map: mapboxgl.Map,
   routeLines: RouteLine[],
-  theme: "dark" | "light" = "dark"
+  theme: "dark" | "light" = "dark",
+  showTrainLines: boolean = false
 ) {
   const layers = map.getStyle().layers;
   const labelLayerId = layers?.find(
@@ -1015,9 +1296,20 @@ function setupMapLayers(
     );
   }
 
+  // Handle train line visibility
   routeLines.forEach((route, index) => {
     const id = `route-${index}`;
-    if (!map.getSource(id)) {
+
+    // Remove existing layer/source if exists
+    if (map.getLayer(id)) {
+      map.removeLayer(id);
+    }
+    if (map.getSource(id)) {
+      map.removeSource(id);
+    }
+
+    // Only add if showTrainLines is true
+    if (showTrainLines) {
       map.addSource(id, {
         type: "geojson",
         data: {
@@ -1041,7 +1333,7 @@ function setupMapLayers(
           },
         },
         labelLayerId
-      ); // Also insert routes below labels
+      );
     }
   });
 }
