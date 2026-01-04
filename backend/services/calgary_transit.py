@@ -1484,6 +1484,96 @@ async def get_stops_geojson() -> GeoJSONFeatureCollection:
     return GeoJSONFeatureCollection(features=features)
 
 
+async def get_stops_with_routes_geojson() -> GeoJSONFeatureCollection:
+    """Fetch all transit stops with route information from GTFS data"""
+    import pandas as pd
+
+    gtfs_path = Path(__file__).parent.parent / "gtfs_data"
+
+    # Load GTFS data files
+    stops_df = pd.read_csv(gtfs_path / "stops.txt")
+    stop_times_df = pd.read_csv(
+        gtfs_path / "stop_times.txt", usecols=["trip_id", "stop_id"]
+    )
+    trips_df = pd.read_csv(gtfs_path / "trips.txt", usecols=["trip_id", "route_id"])
+    routes_df = pd.read_csv(
+        gtfs_path / "routes.txt",
+        usecols=["route_id", "route_short_name", "route_long_name"],
+    )
+
+    # Merge to get routes for each stop_id with both short name and long name
+    stop_routes = (
+        stop_times_df.merge(trips_df, on="trip_id")
+        .merge(routes_df, on="route_id")[
+            ["stop_id", "route_short_name", "route_long_name"]
+        ]
+        .drop_duplicates(subset=["stop_id", "route_short_name"])
+    )
+
+    # Group routes by stop_id - create list of route info dicts
+    def aggregate_routes(group):
+        routes_list = []
+        for _, row in group.iterrows():
+            short_name = str(row["route_short_name"])
+            long_name = (
+                row["route_long_name"] if pd.notna(row["route_long_name"]) else ""
+            )
+            routes_list.append({"number": short_name, "name": long_name})
+        # Sort by route number (numeric first, then alphabetic)
+        routes_list.sort(
+            key=lambda x: (
+                not x["number"].isdigit(),
+                x["number"].zfill(5) if x["number"].isdigit() else x["number"],
+            )
+        )
+        return routes_list
+
+    stop_routes_grouped = (
+        stop_routes.groupby("stop_id").apply(aggregate_routes).reset_index()
+    )
+    stop_routes_grouped.columns = ["stop_id", "routes_info"]
+
+    # Merge with stops
+    stops_with_routes = stops_df.merge(stop_routes_grouped, on="stop_id", how="left")
+
+    features = []
+    for _, stop in stops_with_routes.iterrows():
+        lat = stop.get("stop_lat")
+        lon = stop.get("stop_lon")
+        if pd.isna(lat) or pd.isna(lon):
+            continue
+
+        routes_info = (
+            stop.get("routes_info") if isinstance(stop.get("routes_info"), list) else []
+        )
+        # Extract just route numbers and names as separate lists for compatibility
+        routes = [r["number"] for r in routes_info] if routes_info else []
+        route_names = [r["name"] for r in routes_info] if routes_info else []
+
+        features.append(
+            GeoJSONFeature(
+                geometry=Geometry(
+                    type="Point",
+                    coordinates=[float(lon), float(lat)],
+                ),
+                properties={
+                    "stop_id": str(stop.get("stop_id")),
+                    "stop_name": stop.get("stop_name"),
+                    "stop_code": (
+                        str(stop.get("stop_code"))
+                        if pd.notna(stop.get("stop_code"))
+                        else None
+                    ),
+                    "routes": routes,
+                    "route_names": route_names,
+                    "type": "BUS",
+                },
+            )
+        )
+
+    return GeoJSONFeatureCollection(features=features)
+
+
 async def get_route_geojson(
     route_category: str, route_short_name: Optional[str] = None, status: str = "ACTIVE"
 ) -> GeoJSONFeatureCollection:

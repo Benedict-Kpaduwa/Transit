@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Background circle -->
+  <circle cx="16" cy="16" r="15" fill="#DC143C"/>
+  
+  <!-- Train body -->
+  <rect x="8" y="8" width="16" height="16" rx="3" fill="white"/>
+  
+  <!-- Train windows -->
+  <rect x="10" y="10" width="4" height="3" rx="0.5" fill="#DC143C"/>
+  <rect x="18" y="10" width="4" height="3" rx="0.5" fill="#DC143C"/>
+  
+  <!-- Train door -->
+  <rect x="13" y="14" width="6" height="6" rx="0.5" fill="#333"/>
+  
+  <!-- Train wheels -->
+  <circle cx="11" cy="26" r="2" fill="#333"/>
+  <circle cx="21" cy="26" r="2" fill="#333"/>
+  
+  <!-- Track line -->
+  <rect x="4" y="25" width="24" height="2" fill="#666"/>
+</svg>
+

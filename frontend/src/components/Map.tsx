@@ -23,6 +23,7 @@ import { MapContext } from "@/context/map-context";
 import MapSearch from "@/components/map/map-search";
 import MapStyles from "@/components/map/map-styles";
 import MapControls from "@/components/map/map-controls";
+import StationSearch from "@/components/map/station-search";
 import Train3DLayer, {
   type TrainPositionData,
 } from "@/components/map/train-3d-layer";
@@ -78,6 +79,8 @@ const Map = ({
 
   // Train lines visibility toggle (hidden by default, shown when directions active)
   const [showTrainLines, setShowTrainLines] = useState(false);
+  // Ref to track showTrainLines for style.load event
+  const showTrainLinesRef = useRef(showTrainLines);
 
   // Trip planning state
   const [tripPlan, setTripPlan] = useState<TripPlan | null>(null);
@@ -201,8 +204,8 @@ const Map = ({
     map.on("style.load", () => {
       // Get the current theme from the store
       const currentTheme = useTheme.getState().resolvedTheme;
-      // Preserve current showTrainLines state on style changes
-      setupMapLayers(map, routeLines, currentTheme, false);
+      // Preserve current showTrainLines state on style changes using ref
+      setupMapLayers(map, routeLines, currentTheme, showTrainLinesRef.current);
     });
 
     return () => {
@@ -224,18 +227,20 @@ const Map = ({
     }
   }, [resolvedTheme, mapLoaded]);
 
-  // Update train lines visibility when toggle changes or trip is active
+  // Sync showTrainLines ref for style.load event
+  useEffect(() => {
+    showTrainLinesRef.current = showTrainLines;
+  }, [showTrainLines]);
+
+  // Update train lines visibility when toggle changes
+  // Note: Trip directions use their own transit route layer, not these full lines
   useEffect(() => {
     if (!mapRef.current || !mapLoaded) return;
     const map = mapRef.current;
 
-    // Check if trip has transit segments (CTrain)
-    const tripHasCTrain = tripPlan?.segments?.some(
-      (s) => s.type === "transit" && s.vehicle_type === "CTrain"
-    );
-
-    // Show train lines if manually toggled OR if trip has CTrain directions
-    const shouldShowLines = showTrainLines || tripHasCTrain;
+    // Only show full train lines when manually toggled
+    // Trip directions draw their own specific segment via trip-transit-route layer
+    const shouldShowLines = showTrainLines;
 
     routeLines.forEach((route, index) => {
       const layerId = `route-${index}`;
@@ -284,7 +289,7 @@ const Map = ({
         );
       }
     });
-  }, [showTrainLines, tripPlan, mapLoaded, routeLines]);
+  }, [showTrainLines, mapLoaded, routeLines]);
 
   // 3D train models are now handled by Train3DLayer component
   // The trainPosition updates are passed to the component via props
@@ -348,6 +353,8 @@ const Map = ({
           id: stop.id,
           name: stop.name,
           code: stop.code,
+          routes: JSON.stringify(stop.routes || []),
+          routeNames: JSON.stringify(stop.routeNames || []),
         },
       })),
     };
@@ -424,17 +431,66 @@ const Map = ({
       const name = feature.properties?.name || "Bus Stop";
       const code = feature.properties?.code || "";
 
+      // Parse routes and route names from JSON strings
+      let routes: string[] = [];
+      let routeNames: string[] = [];
+      try {
+        routes = JSON.parse(feature.properties?.routes || "[]");
+        routeNames = JSON.parse(feature.properties?.routeNames || "[]");
+      } catch {
+        routes = [];
+        routeNames = [];
+      }
+
+      // Create routes display HTML - show route number with name
+      const routesHtml =
+        routes.length > 0
+          ? `<div style="margin-top: 8px;">
+              <p style="margin: 0 0 6px; font-size: 11px; color: #888; font-weight: 500;">Routes serving this stop:</p>
+              <div style="display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto;">
+                ${routes
+                  .slice(0, 8)
+                  .map((r, idx) => {
+                    // Try to find a matching route name
+                    const routeName =
+                      routeNames[idx] ||
+                      routeNames.find((n) =>
+                        n?.toLowerCase().includes(r.toLowerCase())
+                      ) ||
+                      "";
+                    return `<div style="display: flex; align-items: center; gap: 6px;">
+                      <span style="background: #22c55e; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; min-width: 28px; text-align: center;">${r}</span>
+                      ${
+                        routeName
+                          ? `<span style="font-size: 11px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;">${routeName}</span>`
+                          : ""
+                      }
+                    </div>`;
+                  })
+                  .join("")}
+                ${
+                  routes.length > 8
+                    ? `<span style="color: #666; font-size: 11px; padding-top: 4px;">+${
+                        routes.length - 8
+                      } more routes</span>`
+                    : ""
+                }
+              </div>
+            </div>`
+          : "";
+
       new mapboxgl.Popup()
         .setLngLat(coordinates)
         .setHTML(
           `
-          <div style="padding: 8px; font-family: system-ui;">
-            <strong style="font-size: 14px;">${name}</strong>
+          <div style="padding: 10px; font-family: system-ui; min-width: 200px; max-width: 280px;">
+            <strong style="font-size: 14px; color: #111;">${name}</strong>
             ${
               code
                 ? `<p style="margin: 4px 0 0; font-size: 12px; color: #666;">Stop #${code}</p>`
                 : ""
             }
+            ${routesHtml}
           </div>
         `
         )
@@ -978,6 +1034,14 @@ const Map = ({
         {/* Map Search - top center */}
         {mapLoaded && <MapSearch />}
 
+        {/* Station Search - top left */}
+        {mapLoaded && (
+          <StationSearch
+            stations={stations}
+            onStationSelect={onStationSelect}
+          />
+        )}
+
         {/* Trip Planner - top right, beside search */}
         {mapLoaded && (
           <TripPlanner
@@ -1219,7 +1283,7 @@ const Map = ({
 
         {/* Selected Station Info Panel */}
         {selectedStation && (
-          <div className="absolute top-20 right-4 bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-5 min-w-[280px] shadow-2xl z-20">
+          <div className="absolute bottom-9 right-24 bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-5 min-w-[280px] shadow-2xl z-20">
             <button
               onClick={onCloseStationInfo}
               className="absolute top-4 right-3 text-zinc-500 hover:text-zinc-300 transition-colors"
@@ -1276,7 +1340,13 @@ function setupMapLayers(
   const buildingColor = theme === "dark" ? "#444" : "#d1d5db";
   const buildingOpacity = theme === "dark" ? 0.6 : 0.7;
 
-  if (!map.getLayer("3d-buildings")) {
+  // Remove existing 3d-buildings layer if exists (to handle style changes)
+  if (map.getLayer("3d-buildings")) {
+    map.removeLayer("3d-buildings");
+  }
+
+  // Add 3D buildings layer - check if the source has building data
+  try {
     map.addLayer(
       {
         id: "3d-buildings",
@@ -1294,6 +1364,8 @@ function setupMapLayers(
       },
       labelLayerId
     );
+  } catch (e) {
+    console.warn("Could not add 3D buildings layer:", e);
   }
 
   // Handle train line visibility

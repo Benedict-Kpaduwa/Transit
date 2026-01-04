@@ -176,6 +176,8 @@ export interface BusStop {
   name: string;
   code: string;
   coords: [number, number];
+  routes?: string[];
+  routeNames?: string[];
 }
 
 // Response type for bus stops GeoJSON
@@ -191,17 +193,19 @@ interface BusStopGeoJSON {
       stop_id?: string;
       stop_name?: string;
       stop_code?: string;
+      routes?: string[];
+      route_names?: string[];
     };
   }>;
 }
 
 export const busStopApi = {
   /**
-   * Get all bus stops as GeoJSON
+   * Get all bus stops as GeoJSON with route information
    */
   getAllStops: async (): Promise<BusStop[]> => {
     try {
-      const response = await api.get<BusStopGeoJSON>("/stops");
+      const response = await api.get<BusStopGeoJSON>("/stops?with_routes=true");
       return response.data.features
         .filter((f) => f.geometry.type === "Point")
         .map((feature) => ({
@@ -209,6 +213,8 @@ export const busStopApi = {
           name: feature.properties.stop_name || "Unknown Stop",
           code: feature.properties.stop_code || "",
           coords: feature.geometry.coordinates,
+          routes: feature.properties.routes || [],
+          routeNames: feature.properties.route_names || [],
         }));
     } catch (error) {
       console.error("Error fetching bus stops:", error);

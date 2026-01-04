@@ -21,6 +21,7 @@ from services.calgary_transit import (
     get_realtime_trip_updates,
     get_route_geojson,
     get_stops_geojson,
+    get_stops_with_routes_geojson,
     get_vehicles_geojson,
 )
 from services.trip_planner import (
@@ -214,12 +215,15 @@ async def get_trip_updates(
 
 @app.get("/stops", response_model=GeoJSONFeatureCollection)
 async def stops(
-    transit_type: str = Query("BUS", description="Type of transit: BUS or LRT")
+    transit_type: str = Query("BUS", description="Type of transit: BUS or LRT"),
+    with_routes: bool = Query(False, description="Include route information from GTFS"),
 ):
     """Get all transit stops as GeoJSON"""
     try:
         if transit_type.upper() == "LRT":
             return await get_lrt_stations_geojson()
+        elif with_routes:
+            return await get_stops_with_routes_geojson()
         else:
             return await get_stops_geojson()
     except Exception as e:
