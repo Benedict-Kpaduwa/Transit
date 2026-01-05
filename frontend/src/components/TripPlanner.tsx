@@ -25,6 +25,12 @@ interface TripPlannerProps {
   userLocation: { lng: number; lat: number } | null;
   onRouteCalculated: (tripPlan: TripPlan) => void;
   onClearRoute: () => void;
+  externalDestination?: {
+    name: string;
+    address: string;
+    coordinates: [number, number];
+  } | null;
+  onClearExternalDestination?: () => void;
 }
 
 interface LocationInputProps {
@@ -228,6 +234,8 @@ export default function TripPlanner({
   userLocation,
   onRouteCalculated,
   onClearRoute,
+  externalDestination,
+  onClearExternalDestination,
 }: TripPlannerProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [originQuery, setOriginQuery] = useState("");
@@ -257,6 +265,30 @@ export default function TripPlanner({
 
   const debouncedOriginQuery = useDebounce(originQuery, 300);
   const debouncedDestQuery = useDebounce(destQuery, 300);
+
+  // Handle external destination (from "Get Directions" button)
+  useEffect(() => {
+    if (externalDestination) {
+      // Set destination
+      setDestQuery(externalDestination.address || externalDestination.name);
+      setDestCoords({
+        lng: externalDestination.coordinates[0],
+        lat: externalDestination.coordinates[1],
+      });
+      
+      // Auto-set origin to current location if available
+      if (userLocation) {
+        setUseCurrentLocationForOrigin(true);
+        setOriginCoords(userLocation);
+      }
+      
+      // Expand the trip planner
+      setIsExpanded(true);
+      
+      // Clear the external destination
+      onClearExternalDestination?.();
+    }
+  }, [externalDestination, userLocation, onClearExternalDestination]);
 
   // Geocode origin query
   useEffect(() => {

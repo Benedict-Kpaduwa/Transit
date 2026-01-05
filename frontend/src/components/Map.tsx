@@ -86,6 +86,13 @@ const Map = ({
   const [tripPlan, setTripPlan] = useState<TripPlan | null>(null);
   const tripMarkersRef = useRef<mapboxgl.Marker[]>([]);
 
+  // External destination for "Get Directions" from search results
+  const [externalDestination, setExternalDestination] = useState<{
+    name: string;
+    address: string;
+    coordinates: [number, number];
+  } | null>(null);
+
   // Theme for map style
   const { resolvedTheme } = useTheme();
 
@@ -931,7 +938,7 @@ const Map = ({
         duration: 1500,
       });
     }
-  }, [mapLoaded, tripPlan]);
+  }, [mapLoaded, tripPlan, getTrackSegment, routeLines]);
 
   // Handle route calculation from TripPlanner
   const handleRouteCalculated = useCallback((plan: TripPlan) => {
@@ -941,6 +948,23 @@ const Map = ({
   // Handle clearing route
   const handleClearRoute = useCallback(() => {
     setTripPlan(null);
+  }, []);
+
+  // Handle "Get Directions" from search result popup
+  const handleGetDirections = useCallback(
+    (destination: {
+      name: string;
+      address: string;
+      coordinates: [number, number];
+    }) => {
+      setExternalDestination(destination);
+    },
+    []
+  );
+
+  // Clear external destination after it's consumed by TripPlanner
+  const handleClearExternalDestination = useCallback(() => {
+    setExternalDestination(null);
   }, []);
 
   // Get user location
@@ -1032,7 +1056,7 @@ const Map = ({
         )}
 
         {/* Map Search - top center */}
-        {mapLoaded && <MapSearch />}
+        {mapLoaded && <MapSearch onGetDirections={handleGetDirections} />}
 
         {/* Station Search - top left */}
         {mapLoaded && (
@@ -1048,6 +1072,8 @@ const Map = ({
             userLocation={userLocation}
             onRouteCalculated={handleRouteCalculated}
             onClearRoute={handleClearRoute}
+            externalDestination={externalDestination}
+            onClearExternalDestination={handleClearExternalDestination}
           />
         )}
 

@@ -258,6 +258,26 @@
   height: 16px;
 }
 
+/* Custom Mapbox Popup Styles */
+.mapboxgl-popup {
+  z-index: 50;
+}
+
+.mapboxgl-popup-content {
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.mapboxgl-popup-tip {
+  display: none !important;
+}
+
+.mapboxgl-popup-close-button {
+  display: none !important;
+}
+
 /* View Transition Wave Effect */
 ::view-transition-old(root),
 ::view-transition-new(root) {

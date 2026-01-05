@@ -4,7 +4,7 @@ from typing import Optional
 import uvicorn
 from config import settings
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware 
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.inmemory import InMemoryBackend
 from fastapi_cache.decorator import cache
@@ -58,7 +58,7 @@ async def root():
             "all_stops": "/stops",
             "bus_routes": "/map/routes/{category}",
             "lrt_stations": "/lrt/stations",
-            "lrt_stations_sorted": "/lrt/stations/sorted",
+            "lrt_stations_sorted": "/lrt/stations/sorted", 
             "lrt_routes": "/lrt/routes",
             "lrt_routes_generated": "/lrt/routes/generated",
             "lrt_tracks": "/lrt/tracks (actual track geometry from GTFS)",
@@ -77,7 +77,7 @@ async def get_ctrains(
     """Get real-time C-Train positions"""
     try:
         ctrains = await get_realtime_ctrain_positions_with_routes(line=line)
-
+        
         return {
             "total": len(ctrains),
             "line": line.upper() if line else "ALL",
@@ -94,19 +94,19 @@ async def get_ctrains_geojson_endpoint(
     """Get real-time C-Train positions as GeoJSON"""
     try:
         ctrains = await get_realtime_ctrain_positions_with_routes(line=line)
-
+        
         features = []
         for ctrain in ctrains:
             position = ctrain.get("position", {})
             lat = position.get("latitude")
             lon = position.get("longitude")
-
+            
             if lat is not None and lon is not None:
                 features.append(
                     {
-                        "type": "Feature",
+                    "type": "Feature",
                         "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                        "properties": {
+                    "properties": {
                             "vehicle_id": ctrain.get("vehicle_id"),
                             "route_id": ctrain.get("route_id"),
                             "line": ctrain.get("line"),
@@ -118,7 +118,7 @@ async def get_ctrains_geojson_endpoint(
                         },
                     }
                 )
-
+        
         return {
             "type": "FeatureCollection",
             "features": features,
@@ -147,7 +147,7 @@ async def get_buses(
         buses = await get_realtime_bus_positions_with_routes(
             route_category=route_category, route_id=route_id, debug_unmatched=debug
         )
-
+        
         return {
             "total": len(buses),
             "filters": {
@@ -203,11 +203,11 @@ async def get_trip_updates(
     """Get real-time trip updates (arrival predictions)"""
     try:
         updates = await get_realtime_trip_updates()
-
+        
         if line:
             route_id = "201" if line.upper() == "RED" else "202"
             updates = [u for u in updates if u.get("route_id") == route_id]
-
+        
         return {"total": len(updates), "updates": updates}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -18,7 +18,15 @@ import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 import { LocationMarker } from "../location-marker";
 import { LocationPopup } from "../location-popup";
 
-export default function MapSearch() {
+interface MapSearchProps {
+  onGetDirections?: (destination: {
+    name: string;
+    address: string;
+    coordinates: [number, number];
+  }) => void;
+}
+
+export default function MapSearch({ onGetDirections }: MapSearchProps) {
   const { map } = useMap();
   const [query, setQuery] = useState("");
   const [displayValue, setDisplayValue] = useState("");
@@ -254,11 +262,18 @@ export default function MapSearch() {
         <LocationMarker
           key={location.properties.mapbox_id}
           location={location}
-          onHover={(data) => setSelectedLocation(data)}
+          onClick={(data) => setSelectedLocation(data)}
+          isSelected={selectedLocation?.properties.mapbox_id === location.properties.mapbox_id}
         />
       ))}
 
-      {selectedLocation && <LocationPopup location={selectedLocation} />}
+      {selectedLocation && (
+        <LocationPopup
+          location={selectedLocation}
+          onGetDirections={onGetDirections}
+          onClose={() => setSelectedLocation(null)}
+        />
+      )}
     </>
   );
 }
