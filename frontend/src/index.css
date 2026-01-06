@@ -20,8 +20,6 @@
   font-style: italic;
 }
 
-
-
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -65,7 +63,8 @@
   --color-sidebar-ring: var(--sidebar-ring);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-serif: var(--font-serif);}
+  --font-serif: var(--font-serif);
+}
 
 :root {
   --radius: 0.625rem;
@@ -312,5 +311,3 @@
   /* Apply the reveal animation */
   animation: reveal 0.4s ease-in-out forwards;
 }
-
-

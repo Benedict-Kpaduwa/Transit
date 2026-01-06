@@ -29,6 +29,7 @@ import Train3DLayer, {
 } from "@/components/map/train-3d-layer";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 import { useTheme } from "@/stores/use-theme-store";
+import NearbyArrivals from "@/components/NearbyArrivals";
 
 // Map themes to Mapbox styles
 const MAPBOX_STYLES = {
@@ -1059,11 +1060,27 @@ const Map = ({
         {mapLoaded && <MapSearch onGetDirections={handleGetDirections} />}
 
         {/* Station Search - top left */}
-        {mapLoaded && (
+        {/* {mapLoaded && (
           <StationSearch
             stations={stations}
             onStationSelect={onStationSelect}
           />
+        )} */}
+
+        {/* Nearby Arrivals - left side panel */}
+        {mapLoaded && userLocation && (
+          <div className="absolute top-20 left-4 z-10 w-[320px]">
+            <NearbyArrivals
+              userLocation={userLocation}
+              onStopClick={(_stopId, coords) => {
+                mapRef.current?.flyTo({
+                  center: coords,
+                  zoom: 16,
+                  duration: 1500,
+                });
+              }}
+            />
+          </div>
         )}
 
         {/* Trip Planner - top right, beside search */}

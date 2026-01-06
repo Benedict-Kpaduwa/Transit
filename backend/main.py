@@ -1,43 +1,57 @@
+"""
+Calgary Transit API v3.0
+Clean architecture with proper GTFS data handling
+"""
+
 from datetime import datetime
 from typing import Optional
 
 import uvicorn
 from config import settings
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware 
-from fastapi_cache import FastAPICache
-from fastapi_cache.backends.inmemory import InMemoryBackend
-from fastapi_cache.decorator import cache
-from models.geo import GeoJSONFeatureCollection
+from fastapi.middleware.cors import CORSMiddleware
+from services.arrivals_service import (
+    get_all_ctrain_arrivals,
+    get_nearby_stops_with_arrivals,
+    get_route_schedule,
+    get_station_arrivals,
+    get_stop_arrivals,
+)
+
+# Import legacy services for backwards compatibility
 from services.calgary_transit import (
-    generate_route_from_sorted_stations,
-    get_lrt_routes_geojson,
-    get_lrt_routes_new_api,
     get_lrt_stations_geojson,
     get_lrt_stations_sorted_geojson,
     get_lrt_tracks_from_gtfs,
-    get_realtime_bus_positions_with_routes,
-    get_realtime_ctrain_positions_with_routes,
-    get_realtime_trip_updates,
-    get_route_geojson,
     get_stops_geojson,
     get_stops_with_routes_geojson,
-    get_vehicles_geojson,
 )
-from services.trip_planner import (
-    find_nearest_stops,
-    geocode_address,
-    load_stops_data,
+
+# Import new services
+from services.gtfs_service import (
+    download_static_gtfs,
+    get_all_routes,
+    get_all_stops,
+    get_cache_stats,
+    get_realtime_arrivals,
+    get_route,
+    get_routes_serving_stop,
+    get_stop,
+    get_vehicle_positions,
+    is_loaded,
+    load_gtfs_static,
+)
+from services.trip_service import (
+    find_nearby_stops,
+    geocode_location,
     plan_trip,
 )
 
-app = FastAPI(title="Calgary Transit API", version="2.0.0")
-
-
-@app.on_event("startup")
-async def startup():
-    FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
-
+app = FastAPI(
+    title="Calgary Transit API",
+    version="3.0.0",
+    description="Real-time transit data and trip planning for Calgary Transit",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,177 +62,324 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def startup():
+    """Initialize GTFS data on startup"""
+    print("🚀 Starting Calgary Transit API v3.0...")
+
+    # Download GTFS if needed
+    await download_static_gtfs()
+
+    # Load GTFS data into memory
+    load_gtfs_static()
+
+    print("✅ API ready!")
+
+
 @app.get("/")
 async def root():
+    """API root with available endpoints"""
     return {
-        "message": "Calgary Transit API",
-        "version": "2.0.0",
-        "has_app_token": bool(settings.calgary_app_token),
+        "name": "Calgary Transit API",
+        "version": "3.0.0",
+        "status": "ready" if is_loaded() else "loading",
         "endpoints": {
+            # Real-time arrivals (like Transit app)
+            "stop_arrivals": "/arrivals/{stop_id}",
+            "nearby_arrivals": "/arrivals/nearby",
+            "station_arrivals": "/arrivals/station/{station_name}",
+            # Vehicle tracking
+            "ctrains": "/vehicles/ctrains",
+            "buses": "/vehicles/buses",
+            # Trip planning
+            "plan_trip": "/trip/plan",
+            "geocode": "/geocode",
+            "nearby_stops": "/stops/nearby",
+            # Static data
             "all_stops": "/stops",
-            "bus_routes": "/map/routes/{category}",
+            "all_routes": "/routes",
+            "lrt_tracks": "/lrt/tracks",
             "lrt_stations": "/lrt/stations",
-            "lrt_stations_sorted": "/lrt/stations/sorted", 
-            "lrt_routes": "/lrt/routes",
-            "lrt_routes_generated": "/lrt/routes/generated",
-            "lrt_tracks": "/lrt/tracks (actual track geometry from GTFS)",
-            "lrt_by_line": "/lrt/stations/by-line/{line}",
-            "lrt_sorted_by_line": "/lrt/stations/sorted/{line}",
+            # System
             "health": "/health",
+            "cache_stats": "/stats",
         },
     }
 
 
-# C-Train endpoints
-@app.get("/ctrains")
-async def get_ctrains(
-    line: Optional[str] = Query(None, description="C-Train line: RED or BLUE")
+# ============================================
+# Real-Time Arrivals (Transit App Style)
+# ============================================
+
+# NOTE: Static paths must come BEFORE dynamic paths like {stop_id}
+# Otherwise /arrivals/nearby would match /arrivals/{stop_id} with stop_id="nearby"
+
+
+@app.get("/arrivals/nearby")
+async def arrivals_nearby(
+    lat: float = Query(..., description="Latitude"),
+    lng: float = Query(..., description="Longitude"),
+    radius: float = Query(500, description="Search radius in meters"),
+    limit_stops: int = Query(5, description="Maximum stops to return"),
+    limit_arrivals: int = Query(3, description="Arrivals per stop"),
+    vehicle_type: Optional[str] = Query(None, description="Filter: CTrain or Bus"),
 ):
-    """Get real-time C-Train positions"""
+    """
+    Get nearby stops with their upcoming arrivals.
+    Like the Transit app home screen.
+    """
     try:
-        ctrains = await get_realtime_ctrain_positions_with_routes(line=line)
-        
-        return {
-            "total": len(ctrains),
-            "line": line.upper() if line else "ALL",
-            "ctrains": ctrains,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/ctrains/geojson")
-async def get_ctrains_geojson_endpoint(
-    line: Optional[str] = Query(None, description="C-Train line: RED or BLUE")
-):
-    """Get real-time C-Train positions as GeoJSON"""
-    try:
-        ctrains = await get_realtime_ctrain_positions_with_routes(line=line)
-        
-        features = []
-        for ctrain in ctrains:
-            position = ctrain.get("position", {})
-            lat = position.get("latitude")
-            lon = position.get("longitude")
-            
-            if lat is not None and lon is not None:
-                features.append(
-                    {
-                    "type": "Feature",
-                        "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                    "properties": {
-                            "vehicle_id": ctrain.get("vehicle_id"),
-                            "route_id": ctrain.get("route_id"),
-                            "line": ctrain.get("line"),
-                            "trip_id": ctrain.get("trip_id"),
-                            "nearest_station": ctrain.get("nearest_station"),
-                            "distance_to_station": ctrain.get("distance_to_station"),
-                            "timestamp": ctrain.get("timestamp"),
-                            "type": "CTRAIN",
-                        },
-                    }
-                )
-        
-        return {
-            "type": "FeatureCollection",
-            "features": features,
-            "metadata": {
-                "count": len(features),
-                "line": line.upper() if line else "ALL",
-                "timestamp": datetime.now().isoformat(),
-            },
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/buses")
-async def get_buses(
-    route_category: Optional[str] = Query(
-        None, alias="category", description="Bus category: BRT, REGULAR, EXPRESS"
-    ),
-    route_id: Optional[str] = Query(
-        None, description="Specific route ID (e.g., 301, 1, 10)"
-    ),
-    debug: bool = Query(False, description="Show debug info for unmatched buses"),
-):
-    """Get real-time bus positions with route information from static GTFS"""
-    try:
-        buses = await get_realtime_bus_positions_with_routes(
-            route_category=route_category, route_id=route_id, debug_unmatched=debug
+        return await get_nearby_stops_with_arrivals(
+            latitude=lat,
+            longitude=lng,
+            radius_meters=radius,
+            limit_stops=limit_stops,
+            limit_arrivals_per_stop=limit_arrivals,
+            vehicle_type_filter=vehicle_type,
         )
-        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/arrivals/station/{station_name}")
+async def arrivals_for_station(
+    station_name: str,
+    line: Optional[str] = Query(None, description="Filter by line: Red or Blue"),
+    limit: int = Query(10, description="Maximum arrivals"),
+):
+    """
+    Get arrivals for a CTrain station by name.
+    Convenience endpoint for LRT stations.
+    """
+    try:
+        result = await get_station_arrivals(
+            station_name=station_name,
+            line=line,
+            limit=limit,
+        )
+
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/arrivals/{stop_id}")
+async def arrivals_for_stop(
+    stop_id: str,
+    limit: int = Query(10, description="Maximum arrivals to return"),
+    route: Optional[str] = Query(
+        None, description="Filter by route (e.g., '201', '3')"
+    ),
+    vehicle_type: Optional[str] = Query(
+        None, description="Filter by type: CTrain or Bus"
+    ),
+):
+    """
+    Get real-time arrivals for a specific stop.
+    This is the core "when is my bus/train coming?" endpoint.
+    """
+    try:
+        result = await get_stop_arrivals(
+            stop_id=stop_id,
+            limit=limit,
+            route_filter=route,
+            vehicle_type_filter=vehicle_type,
+        )
+
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# Vehicle Tracking
+# ============================================
+
+
+@app.get("/vehicles/ctrains")
+async def get_ctrains(
+    line: Optional[str] = Query(None, description="Filter by line: Red or Blue"),
+):
+    """Get real-time CTrain positions"""
+    try:
+        vehicles = await get_vehicle_positions(vehicle_type="CTrain", line=line)
+
         return {
-            "total": len(buses),
-            "filters": {
-                "route_category": route_category.upper() if route_category else None,
-                "route_id": route_id,
-            },
-            "buses": buses,
+            "count": len(vehicles),
+            "line_filter": line,
+            "vehicles": vehicles,
+            "timestamp": datetime.now().isoformat(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/buses/geojson")
-async def get_buses_geojson_endpoint(
-    route_category: Optional[str] = Query(
-        None, alias="category", description="Bus category: BRT, REGULAR, EXPRESS"
-    ),
-    route_id: Optional[str] = Query(None, description="Specific route ID"),
+@app.get("/vehicles/buses")
+async def get_buses(
+    route: Optional[str] = Query(None, description="Filter by route number"),
 ):
-    """Get real-time bus positions as GeoJSON"""
+    """Get real-time bus positions"""
     try:
-        return await get_buses_geojson(route_category=route_category, route_id=route_id)
+        vehicles = await get_vehicle_positions(vehicle_type="Bus", route_id=route)
+
+        return {
+            "count": len(vehicles),
+            "route_filter": route,
+            "vehicles": vehicles,
+            "timestamp": datetime.now().isoformat(),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/vehicles")
-async def get_vehicles(
-    line: Optional[str] = Query(
-        None, description="C-Train line: RED or BLUE (deprecated, use /ctrains)"
-    ),
-    vehicle_type: Optional[str] = Query(
-        None, description="CTRAIN or BUS (deprecated, use /ctrains or /buses)"
-    ),
+async def get_all_vehicles(
+    vehicle_type: Optional[str] = Query(None, description="CTrain or Bus"),
+    route: Optional[str] = Query(None, description="Route ID or number"),
 ):
-    """
-    DEPRECATED: Use /ctrains or /buses instead
-    Get real-time vehicle positions
-    """
+    """Get all real-time vehicle positions"""
     try:
-        if vehicle_type and vehicle_type.upper() == "BUS":
-            return await get_buses(route_category=None, route_id=None)
-        else:
-            return await get_ctrains(line=line)
+        vehicles = await get_vehicle_positions(
+            vehicle_type=vehicle_type,
+            route_id=route,
+        )
+
+        return {
+            "count": len(vehicles),
+            "filters": {
+                "vehicle_type": vehicle_type,
+                "route": route,
+            },
+            "vehicles": vehicles,
+            "timestamp": datetime.now().isoformat(),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/trips")
-async def get_trip_updates(
-    line: Optional[str] = Query(None, description="RED or BLUE")
+# ============================================
+# Trip Planning
+# ============================================
+
+
+@app.get("/trip/plan")
+async def trip_plan_endpoint(
+    origin_lng: float = Query(..., description="Origin longitude"),
+    origin_lat: float = Query(..., description="Origin latitude"),
+    dest_lng: float = Query(..., description="Destination longitude"),
+    dest_lat: float = Query(..., description="Destination latitude"),
+    prefer_lrt: bool = Query(True, description="Prefer CTrain routes"),
 ):
-    """Get real-time trip updates (arrival predictions)"""
+    """
+    Plan a transit trip from origin to destination.
+    Returns walking and transit segments.
+    """
     try:
-        updates = await get_realtime_trip_updates()
-        
-        if line:
-            route_id = "201" if line.upper() == "RED" else "202"
-            updates = [u for u in updates if u.get("route_id") == route_id]
-        
-        return {"total": len(updates), "updates": updates}
+        result = await plan_trip(
+            origin=(origin_lng, origin_lat),
+            destination=(dest_lng, dest_lat),
+            prefer_lrt=prefer_lrt,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/stops", response_model=GeoJSONFeatureCollection)
-async def stops(
-    transit_type: str = Query("BUS", description="Type of transit: BUS or LRT"),
-    with_routes: bool = Query(False, description="Include route information from GTFS"),
+@app.post("/trip/plan")
+async def trip_plan_post(
+    origin_lng: float = Query(..., description="Origin longitude"),
+    origin_lat: float = Query(..., description="Origin latitude"),
+    dest_lng: float = Query(..., description="Destination longitude"),
+    dest_lat: float = Query(..., description="Destination latitude"),
+    prefer_lrt: bool = Query(True, description="Prefer CTrain routes"),
 ):
-    """Get all transit stops as GeoJSON"""
+    """Plan a transit trip (POST version)"""
+    return await trip_plan_endpoint(
+        origin_lng=origin_lng,
+        origin_lat=origin_lat,
+        dest_lng=dest_lng,
+        dest_lat=dest_lat,
+        prefer_lrt=prefer_lrt,
+    )
+
+
+@app.get("/geocode")
+async def geocode_endpoint(
+    q: str = Query(..., description="Address or place to search"),
+    proximity_lng: Optional[float] = Query(
+        None, description="Longitude for proximity bias"
+    ),
+    proximity_lat: Optional[float] = Query(
+        None, description="Latitude for proximity bias"
+    ),
+):
+    """Geocode an address or place name"""
+    try:
+        proximity = None
+        if proximity_lng and proximity_lat:
+            proximity = (proximity_lng, proximity_lat)
+
+        results = await geocode_location(q, proximity)
+        return {
+            "query": q,
+            "results": results,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/stops/nearby")
+async def nearby_stops_endpoint(
+    lat: float = Query(..., description="Latitude"),
+    lng: float = Query(..., description="Longitude"),
+    radius: float = Query(1000, description="Search radius in meters"),
+    limit: int = Query(10, description="Maximum stops"),
+    vehicle_type: Optional[str] = Query(None, description="CTrain or Bus"),
+):
+    """Find transit stops near a location"""
+    try:
+        stops = find_nearby_stops(
+            latitude=lat,
+            longitude=lng,
+            radius_meters=radius,
+            limit=limit,
+            vehicle_type=vehicle_type,
+        )
+        return {
+            "location": {"lat": lat, "lng": lng},
+            "radius_meters": radius,
+            "stops": stops,
+            "count": len(stops),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# Static Data
+# ============================================
+
+
+@app.get("/stops")
+async def all_stops(
+    transit_type: str = Query("BUS", description="BUS or LRT"),
+    with_routes: bool = Query(False, description="Include route info"),
+):
+    """Get all transit stops"""
     try:
         if transit_type.upper() == "LRT":
             return await get_lrt_stations_geojson()
@@ -227,327 +388,150 @@ async def stops(
         else:
             return await get_stops_geojson()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch stops: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/map/routes/{route_category}", response_model=GeoJSONFeatureCollection)
-async def route(
-    route_category: str,
-    route_short_name: str = None,
-    transit_type: str = Query("BUS", description="Type of transit: BUS or LRT"),
-):
-    """Get route geometry by category"""
-    try:
-        if transit_type.upper() == "LRT":
-            return await get_lrt_routes_geojson(route_category)
-        else:
-            data = await get_route_geojson(route_category, route_short_name)
-            if not data.features:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No routes found for category '{route_category}'",
-                )
-            return data
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch route data: {str(e)}"
-        )
+@app.get("/stops/{stop_id}")
+async def stop_detail(stop_id: str):
+    """Get details for a specific stop"""
+    stop = get_stop(stop_id)
+    if not stop:
+        raise HTTPException(status_code=404, detail=f"Stop {stop_id} not found")
 
+    routes = get_routes_serving_stop(stop_id)
 
-@app.get("/lrt/stations", response_model=GeoJSONFeatureCollection)
-async def lrt_stations():
-    """Get all LRT stations (UNSORTED - original order from API)"""
-    try:
-        return await get_lrt_stations_geojson()
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch LRT stations: {str(e)}"
-        )
-
-
-@app.get("/lrt/stations/sorted", response_model=GeoJSONFeatureCollection)
-async def lrt_stations_sorted():
-    """Get all LRT stations SORTED in proper route order"""
-    try:
-        return await get_lrt_stations_sorted_geojson()
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch sorted LRT stations: {str(e)}"
-        )
-
-
-@app.get("/lrt/stations/sorted/{line}", response_model=GeoJSONFeatureCollection)
-async def lrt_stations_sorted_by_line(line: str):
-    """Get LRT stations for a specific line, SORTED in proper route order"""
-    try:
-        if line.upper() not in ["RED", "BLUE"]:
-            raise HTTPException(status_code=400, detail="Line must be RED or BLUE")
-
-        return await get_lrt_stations_sorted_geojson(line.upper())
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch sorted stations: {str(e)}"
-        )
-
-
-@app.get("/lrt/stations/by-line/{line}", response_model=GeoJSONFeatureCollection)
-async def lrt_stations_by_line(line: str):
-    """Get LRT stations filtered by line (RED or BLUE) - UNSORTED"""
-    try:
-        all_stations = await get_lrt_stations_geojson()
-
-        if line.upper() == "RED":
-            route_filter = "201"
-        elif line.upper() == "BLUE":
-            route_filter = "202"
-        elif line.upper() in ["BOTH", "RED/BLUE", "201/202"]:
-            route_filter = "201/202"
-        else:
-            raise HTTPException(status_code=400, detail="Invalid line. Use RED or BLUE")
-
-        filtered_features = []
-        for feature in all_stations.features:
-            route = feature.properties.get("route", "")
-            if route_filter == "201/202":
-                if "201" in route or "202" in route:
-                    filtered_features.append(feature)
-            elif route == route_filter:
-                filtered_features.append(feature)
-
-        return GeoJSONFeatureCollection(features=filtered_features)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to filter stations: {str(e)}"
-        )
-
-
-@app.get("/lrt/routes", response_model=GeoJSONFeatureCollection)
-async def lrt_routes(
-    line: str = None,
-    use_new_api: bool = Query(False, description="Use the new API endpoint"),
-):
-    """Get LRT route geometries - tries pre-defined routes first, falls back to generated"""
-    try:
-        if use_new_api:
-            if not settings.calgary_app_token:
-                raise HTTPException(
-                    status_code=400,
-                    detail="App token not configured. Set CALGARY_APP_TOKEN environment variable.",
-                )
-            return await get_lrt_routes_new_api(line)
-        else:
-            return await get_lrt_routes_geojson(line)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch LRT routes: {str(e)}"
-        )
-
-
-@app.get("/lrt/routes/generated", response_model=GeoJSONFeatureCollection)
-async def lrt_routes_generated(
-    line: str = None,
-):
-    """Get LRT route geometries GENERATED from sorted stations (always sorted)"""
-    try:
-        return await generate_route_from_sorted_stations(line)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to generate LRT routes: {str(e)}"
-        )
-
-
-@app.get("/lrt/tracks", response_model=GeoJSONFeatureCollection)
-async def lrt_tracks(
-    line: str = Query(None, description="Filter by line: RED or BLUE"),
-):
-    """Get actual C-Train track geometry from GTFS shapes - follows real train tracks"""
-    try:
-        return await get_lrt_tracks_from_gtfs(line)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch LRT tracks: {str(e)}"
-        )
-
-
-@app.get("/routes/categories")
-async def route_categories():
-    """Get available route categories"""
     return {
-        "bus_categories": ["REGULAR", "EXPRESS", "SCHOOL", "BRT"],
-        "lrt_lines": ["RED", "BLUE"],
-        "note": "For sorted stations, use /lrt/stations/sorted endpoint",
+        "stop": stop,
+        "routes": routes,
     }
 
 
-@app.get("/lrt/lines")
-async def lrt_lines():
-    """Get LRT line information"""
-    return {
-        "lines": [
-            {
-                "name": "RED",
-                "route_number": "201",
-                "description": "North-South Line: Tuscany to Somerset-Bridlewood",
-                "sorting": "Stations sorted North to South",
-                "endpoints": ["Tuscany Station", "Somerset-Bridlewood Station"],
-            },
-            {
-                "name": "BLUE",
-                "route_number": "202",
-                "description": "West-East Line: 69 Street SW to Saddletowne",
-                "sorting": "Stations sorted West to East",
-                "endpoints": ["69 Street SW Station", "Saddletowne Station"],
-            },
-        ]
-    }
+@app.get("/routes")
+async def all_routes():
+    """Get all transit routes"""
+    routes = get_all_routes()
 
+    # Group by vehicle type
+    ctrains = [r for r in routes if r.get("vehicle_type") == "CTrain"]
+    buses = [r for r in routes if r.get("vehicle_type") == "Bus"]
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
     return {
-        "status": "healthy",
-        "app_token_configured": bool(settings.calgary_app_token),
-        "mapbox_configured": bool(settings.mapbox_access_token),
-        "features": {
-            "station_sorting": "enabled",
-            "route_generation": "enabled",
-            "trip_planning": bool(settings.mapbox_access_token),
+        "total": len(routes),
+        "ctrain": {
+            "count": len(ctrains),
+            "routes": ctrains,
+        },
+        "bus": {
+            "count": len(buses),
+            "routes": sorted(buses, key=lambda r: r.get("route_short_name", "")),
         },
     }
 
 
+@app.get("/routes/{route_id}")
+async def route_detail(route_id: str):
+    """Get details for a specific route"""
+    route = get_route(route_id)
+    if not route:
+        raise HTTPException(status_code=404, detail=f"Route {route_id} not found")
+
+    # Get schedule/arrivals
+    schedule = await get_route_schedule(route_id)
+
+    return {
+        "route": route,
+        **schedule,
+    }
+
+
 # ============================================
-# Trip Planning Endpoints
+# LRT Specific Endpoints
 # ============================================
 
 
-@app.get("/geocode")
-async def geocode(
-    q: str = Query(..., description="Search query (address, place name, etc.)"),
-    proximity_lng: Optional[float] = Query(
-        None, description="Longitude for proximity bias"
-    ),
-    proximity_lat: Optional[float] = Query(
-        None, description="Latitude for proximity bias"
-    ),
-):
-    """
-    Geocode an address or place name to coordinates
-    Uses Mapbox Geocoding API, results are biased to Calgary area
-    """
+@app.get("/lrt/stations")
+async def lrt_stations():
+    """Get all LRT stations"""
     try:
-        proximity = None
-        if proximity_lng and proximity_lat:
-            proximity = (proximity_lng, proximity_lat)
-
-        results = await geocode_address(q, proximity)
-        return {
-            "query": q,
-            "results": results,
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return await get_lrt_stations_geojson()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Geocoding failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/nearby-stops")
-async def nearby_stops(
-    lat: float = Query(..., description="Latitude"),
-    lng: float = Query(..., description="Longitude"),
-    limit: int = Query(5, description="Maximum number of stops to return"),
-    max_distance: float = Query(2000, description="Maximum distance in meters"),
-    stop_type: Optional[str] = Query(
-        None, description="Filter by stop type: LRT or BUS"
-    ),
+@app.get("/lrt/stations/sorted")
+async def lrt_stations_sorted(
+    line: Optional[str] = Query(None, description="RED or BLUE"),
 ):
-    """
-    Find transit stops near a location
-    """
+    """Get LRT stations in route order"""
     try:
-        stops_df = load_stops_data()
-        stops = find_nearest_stops(
-            lat,
-            lng,
-            stops_df,
-            limit=limit,
-            max_distance=max_distance,
-            stop_type=stop_type.upper() if stop_type else None,
-        )
-        return {
-            "location": {"lat": lat, "lng": lng},
-            "stops": stops,
-        }
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="GTFS data not loaded")
+        return await get_lrt_stations_sorted_geojson(line.upper() if line else None)
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to find nearby stops: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/trip/plan")
-async def trip_plan(
-    origin_lng: float = Query(..., description="Origin longitude"),
-    origin_lat: float = Query(..., description="Origin latitude"),
-    dest_lng: float = Query(..., description="Destination longitude"),
-    dest_lat: float = Query(..., description="Destination latitude"),
-    prefer_lrt: bool = Query(True, description="Prefer LRT over bus routes"),
+@app.get("/lrt/tracks")
+async def lrt_tracks(
+    line: Optional[str] = Query(None, description="RED or BLUE"),
 ):
-    """
-    Plan a trip from origin to destination using Calgary Transit
-    Returns route segments including walking and transit directions
-    """
+    """Get LRT track geometry"""
     try:
-        result = await plan_trip(
-            origin_coords=(origin_lng, origin_lat),
-            destination_coords=(dest_lng, dest_lat),
-            prefer_lrt=prefer_lrt,
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="GTFS data not loaded")
+        return await get_lrt_tracks_from_gtfs(line)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Trip planning failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/trip/plan")
-async def trip_plan_get(
-    origin_lng: float = Query(..., description="Origin longitude"),
-    origin_lat: float = Query(..., description="Origin latitude"),
-    dest_lng: float = Query(..., description="Destination longitude"),
-    dest_lat: float = Query(..., description="Destination latitude"),
-    prefer_lrt: bool = Query(True, description="Prefer LRT over bus routes"),
+@app.get("/lrt/arrivals")
+async def lrt_arrivals(
+    line: Optional[str] = Query(None, description="RED or BLUE"),
 ):
-    """
-    Plan a trip from origin to destination using Calgary Transit (GET version)
-    Returns route segments including walking and transit directions
-    """
+    """Get all CTrain arrivals across the network"""
     try:
-        result = await plan_trip(
-            origin_coords=(origin_lng, origin_lat),
-            destination_coords=(dest_lng, dest_lat),
-            prefer_lrt=prefer_lrt,
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="GTFS data not loaded")
+        return await get_all_ctrain_arrivals(line)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Trip planning failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# System Endpoints
+# ============================================
+
+
+@app.get("/health")
+async def health():
+    """Health check"""
+    return {
+        "status": "healthy" if is_loaded() else "loading",
+        "gtfs_loaded": is_loaded(),
+        "mapbox_configured": bool(settings.mapbox_access_token),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/stats")
+async def stats():
+    """Cache and system statistics"""
+    return get_cache_stats()
+
+
+# ============================================
+# Legacy Endpoints (for backwards compatibility)
+# ============================================
+
+
+@app.get("/ctrains")
+async def legacy_ctrains(
+    line: Optional[str] = Query(None, description="RED or BLUE"),
+):
+    """Legacy endpoint - use /vehicles/ctrains instead"""
+    return await get_ctrains(line=line)
+
+
+@app.get("/buses")
+async def legacy_buses(
+    route_id: Optional[str] = Query(None),
+):
+    """Legacy endpoint - use /vehicles/buses instead"""
+    return await get_buses(route=route_id)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,15 @@
 import type { LocationFeature } from "@/lib/mapbox/utils";
 import { iconMap } from "@/lib/mapbox/utils";
 import { cn } from "@/lib/utils";
-import { LocateIcon, MapPin, Navigation, X, Copy, ExternalLink, Check } from "lucide-react";
+import {
+  LocateIcon,
+  MapPin,
+  Navigation,
+  X,
+  Copy,
+  ExternalLink,
+  Check,
+} from "lucide-react";
 import { useState } from "react";
 
 import Popup from "@/components/map/map-popup";
@@ -85,7 +93,9 @@ export function LocationPopup({
 
           <div className="flex items-start gap-3 pr-8">
             <div className="bg-blue-500/15 dark:bg-blue-500/20 p-2.5 rounded-xl shrink-0 border border-blue-500/20 dark:border-blue-500/30">
-              <span className="text-blue-600 dark:text-blue-400">{getIcon()}</span>
+              <span className="text-blue-600 dark:text-blue-400">
+                {getIcon()}
+              </span>
             </div>
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-zinc-900 dark:text-white text-base leading-tight truncate">
@@ -151,13 +161,17 @@ export function LocationPopup({
                 onClick={copyCoordinates}
                 className={cn(
                   "p-1.5 rounded-lg transition-all",
-                  copied 
-                    ? "text-emerald-500 dark:text-emerald-400 bg-emerald-500/10" 
+                  copied
+                    ? "text-emerald-500 dark:text-emerald-400 bg-emerald-500/10"
                     : "text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
                 )}
                 title="Copy coordinates"
               >
-                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? (
+                  <Check className="w-3.5 h-3.5" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
               </button>
               <button
                 onClick={openInGoogleMaps}

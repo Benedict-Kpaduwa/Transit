@@ -275,16 +275,16 @@ export default function TripPlanner({
         lng: externalDestination.coordinates[0],
         lat: externalDestination.coordinates[1],
       });
-      
+
       // Auto-set origin to current location if available
       if (userLocation) {
         setUseCurrentLocationForOrigin(true);
         setOriginCoords(userLocation);
       }
-      
+
       // Expand the trip planner
       setIsExpanded(true);
-      
+
       // Clear the external destination
       onClearExternalDestination?.();
     }

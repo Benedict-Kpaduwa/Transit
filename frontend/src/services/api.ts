@@ -420,3 +420,265 @@ export const tripPlannerApi = {
     }
   },
 };
+
+// ============================================
+// Real-Time Arrivals API (Transit App Style)
+// ============================================
+
+export interface Arrival {
+  trip_id: string;
+  route_id: string;
+  route_short_name: string;
+  vehicle_type: "CTrain" | "Bus";
+  line: string | null;
+  color: string;
+  headsign: string;
+  vehicle_id: string | null;
+  stop_id: string;
+  stop_name: string | null;
+  arrival_time: string;
+  arrival_timestamp: number;
+  delay_seconds: number;
+  delay_minutes: number;
+  minutes_away: number;
+  status: string;
+}
+
+export interface RouteServing {
+  route_id: string;
+  route_short_name: string;
+  route_long_name: string;
+  vehicle_type: "CTrain" | "Bus";
+  line: string | null;
+  color: string;
+}
+
+export interface StopArrivalsResponse {
+  stop: {
+    stop_id: string;
+    stop_code: string;
+    stop_name: string;
+    coordinates: {
+      latitude: number;
+      longitude: number;
+    };
+  };
+  routes_serving: RouteServing[];
+  arrivals: Arrival[];
+  total_arrivals: number;
+  timestamp: string;
+}
+
+export interface NearbyStopWithArrivals {
+  stop: {
+    stop_id: string;
+    stop_code: string;
+    stop_name: string;
+    coordinates: {
+      latitude: number;
+      longitude: number;
+    };
+    distance_meters: number;
+  };
+  routes: Array<{
+    route_short_name: string;
+    vehicle_type: string;
+    color: string;
+  }>;
+  arrivals: Arrival[];
+}
+
+export interface NearbyArrivalsResponse {
+  location: {
+    latitude: number;
+    longitude: number;
+  };
+  radius_meters: number;
+  stops: NearbyStopWithArrivals[];
+  total_stops_found: number;
+  timestamp: string;
+}
+
+export interface StationArrivalsResponse {
+  station: {
+    name: string;
+    stops: Array<{
+      stop_id: string;
+      stop_name: string;
+    }>;
+  };
+  line_filter: string | null;
+  arrivals: Arrival[];
+  total_arrivals: number;
+  timestamp: string;
+}
+
+export const arrivalsApi = {
+  /**
+   * Get real-time arrivals for a specific stop
+   * This is the "when is my bus/train coming?" endpoint
+   */
+  getStopArrivals: async (
+    stopId: string,
+    options?: {
+      limit?: number;
+      route?: string;
+      vehicleType?: "CTrain" | "Bus";
+    }
+  ): Promise<StopArrivalsResponse> => {
+    try {
+      const params: Record<string, string | number> = {};
+      if (options?.limit) params.limit = options.limit;
+      if (options?.route) params.route = options.route;
+      if (options?.vehicleType) params.vehicle_type = options.vehicleType;
+
+      const response = await api.get<StopArrivalsResponse>(
+        `/arrivals/${stopId}`,
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      console.error("Error fetching stop arrivals:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get nearby stops with their arrivals
+   * Like the Transit app home screen
+   */
+  getNearbyArrivals: async (
+    lat: number,
+    lng: number,
+    options?: {
+      radius?: number;
+      limitStops?: number;
+      limitArrivals?: number;
+      vehicleType?: "CTrain" | "Bus";
+    }
+  ): Promise<NearbyArrivalsResponse> => {
+    try {
+      const params: Record<string, string | number> = { lat, lng };
+      if (options?.radius) params.radius = options.radius;
+      if (options?.limitStops) params.limit_stops = options.limitStops;
+      if (options?.limitArrivals) params.limit_arrivals = options.limitArrivals;
+      if (options?.vehicleType) params.vehicle_type = options.vehicleType;
+
+      const response = await api.get<NearbyArrivalsResponse>(
+        "/arrivals/nearby",
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      console.error("Error fetching nearby arrivals:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get arrivals for a CTrain station by name
+   */
+  getStationArrivals: async (
+    stationName: string,
+    line?: "Red" | "Blue",
+    limit?: number
+  ): Promise<StationArrivalsResponse> => {
+    try {
+      const params: Record<string, string | number> = {};
+      if (line) params.line = line;
+      if (limit) params.limit = limit;
+
+      const response = await api.get<StationArrivalsResponse>(
+        `/arrivals/station/${encodeURIComponent(stationName)}`,
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      console.error("Error fetching station arrivals:", error);
+      throw error;
+    }
+  },
+};
+
+// ============================================
+// Vehicle Tracking API
+// ============================================
+
+export interface Vehicle {
+  vehicle_id: string;
+  trip_id: string;
+  route_id: string;
+  route_short_name: string;
+  vehicle_type: "CTrain" | "Bus";
+  line: string | null;
+  color: string;
+  headsign: string;
+  position: {
+    latitude: number;
+    longitude: number;
+    bearing: number | null;
+    speed: number | null;
+  };
+  current_stop_sequence: number | null;
+  stop_id: string | null;
+  current_status: number | null;
+  timestamp: number;
+}
+
+export interface VehiclesResponse {
+  count: number;
+  line_filter?: string | null;
+  route_filter?: string | null;
+  vehicles: Vehicle[];
+  timestamp: string;
+}
+
+export const vehiclesApi = {
+  /**
+   * Get real-time CTrain positions
+   */
+  getCTrains: async (line?: "Red" | "Blue"): Promise<VehiclesResponse> => {
+    try {
+      const params: Record<string, string> = {};
+      if (line) params.line = line;
+
+      const response = await api.get<VehiclesResponse>("/vehicles/ctrains", { params });
+      return response.data;
+    } catch (error) {
+      console.error("Error fetching CTrain positions:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get real-time bus positions
+   */
+  getBuses: async (route?: string): Promise<VehiclesResponse> => {
+    try {
+      const params: Record<string, string> = {};
+      if (route) params.route = route;
+
+      const response = await api.get<VehiclesResponse>("/vehicles/buses", { params });
+      return response.data;
+    } catch (error) {
+      console.error("Error fetching bus positions:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get all vehicles
+   */
+  getAllVehicles: async (vehicleType?: "CTrain" | "Bus"): Promise<VehiclesResponse> => {
+    try {
+      const params: Record<string, string> = {};
+      if (vehicleType) params.vehicle_type = vehicleType;
+
+      const response = await api.get<VehiclesResponse>("/vehicles", { params });
+      return response.data;
+    } catch (error) {
+      console.error("Error fetching vehicles:", error);
+      throw error;
+    }
+  },
+};

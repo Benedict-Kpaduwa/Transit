@@ -263,7 +263,10 @@ export default function MapSearch({ onGetDirections }: MapSearchProps) {
           key={location.properties.mapbox_id}
           location={location}
           onClick={(data) => setSelectedLocation(data)}
-          isSelected={selectedLocation?.properties.mapbox_id === location.properties.mapbox_id}
+          isSelected={
+            selectedLocation?.properties.mapbox_id ===
+            location.properties.mapbox_id
+          }
         />
       ))}
 
