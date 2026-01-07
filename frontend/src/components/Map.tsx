@@ -874,6 +874,10 @@ const Map = ({
       type: "origin" | "transit" | "destination";
       vehicleType?: string;
       color?: string;
+      routeName?: string;
+      stopsCount?: number;
+      headsign?: string;
+      instruction?: string;
     }> = [];
 
     tripPlan.segments.forEach((segment, index) => {
@@ -938,6 +942,10 @@ const Map = ({
           type: "transit",
           vehicleType: segment.vehicle_type,
           color: segment.color,
+          routeName: segment.route_short_name,
+          stopsCount: segment.stops_count || segment.num_stops,
+          headsign: segment.headsign,
+          instruction: segment.instruction,
         });
         transitStops.push({
           coords: segment.to.coordinates,
@@ -945,6 +953,7 @@ const Map = ({
           type: "transit",
           vehicleType: segment.vehicle_type,
           color: segment.color,
+          routeName: segment.route_short_name,
         });
       }
       if (index === tripPlan.segments!.length - 1) {
@@ -1067,26 +1076,42 @@ const Map = ({
           ? `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3.89V19h8V3.89C16 2.3 14.88 1 13.5 1h-3C9.12 1 8 2.3 8 3.89z"/><path d="M12 1v3"/><path d="M8 13h8"/><circle cx="10" cy="17" r="1"/><circle cx="14" cy="17" r="1"/><path d="M5 19h14l-1.5 4H6.5z"/></svg>`
           : `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6v6"/><path d="M15 6v6"/><path d="M2 12h19.6"/><path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/></svg>`;
 
+        // Show stops count badge only for boarding stops with stopsCount
+        const stopsCountBadge = stop.stopsCount && stop.stopsCount > 0 ? `
+          <div class="absolute -top-1 -right-1 w-5 h-5 bg-white rounded-full flex items-center justify-center shadow-md border border-gray-200">
+            <span class="text-xs font-bold" style="color: ${bgColor}">${stop.stopsCount}</span>
+          </div>
+        ` : '';
+
         el.innerHTML = `
-          <div class="w-6 h-6 rounded-full flex items-center justify-center shadow-md border-2 border-white" style="background-color: ${bgColor}">
-            ${icon}
+          <div class="relative">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center shadow-lg border-2 border-white" style="background-color: ${bgColor}">
+              ${icon}
+            </div>
+            ${stopsCountBadge}
           </div>
         `;
       }
 
+      // Build popup content with route info
+      let popupContent = `<div class="p-2">
+        <strong>${stop.name}</strong>`;
+      
+      if (stop.routeName) {
+        popupContent += `<br/><span class="text-sm font-medium" style="color: ${stop.color || '#3b82f6'}">${stop.vehicleType === "CTrain" ? `${stop.routeName} Line` : `Route ${stop.routeName}`}</span>`;
+      }
+      if (stop.stopsCount && stop.stopsCount > 0) {
+        popupContent += `<br/><span class="text-xs text-gray-500">${stop.stopsCount} ${stop.stopsCount === 1 ? 'stop' : 'stops'}</span>`;
+      }
+      if (stop.headsign) {
+        popupContent += `<br/><span class="text-xs text-gray-400">→ ${stop.headsign}</span>`;
+      }
+      popupContent += `</div>`;
+
       const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
         .setLngLat(stop.coords)
         .setPopup(
-          new mapboxgl.Popup({ offset: 25 }).setHTML(
-            `<div class="p-2">
-              <strong>${stop.name}</strong>
-              ${
-                stop.vehicleType
-                  ? `<br/><span class="text-xs text-gray-500">${stop.vehicleType}</span>`
-                  : ""
-              }
-            </div>`
-          )
+          new mapboxgl.Popup({ offset: 25 }).setHTML(popupContent)
         )
         .addTo(map);
 

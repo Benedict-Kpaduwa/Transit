@@ -304,14 +304,22 @@ export interface TripSegment {
   vehicle_type?: string;
   color?: string;
   route_id?: string;
+  route_short_name?: string;
+  route_long_name?: string;
+  headsign?: string;
   num_stops?: number;
+  stops_count?: number;
+  departure_time?: number;
+  arrival_time?: number;
   from: {
     name: string;
     coordinates: [number, number];
+    stop_id?: string;
   };
   to: {
     name: string;
     coordinates: [number, number];
+    stop_id?: string;
   };
 }
 
