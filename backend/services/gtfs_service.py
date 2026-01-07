@@ -5,15 +5,14 @@ Handles loading, caching, and querying of static and real-time GTFS data
 
 import asyncio
 import zipfile
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import aiofiles
 import aiohttp
 import httpx
 import pandas as pd
-from config import settings
 from google.transit import gtfs_realtime_pb2
 
 # URLs
@@ -47,6 +46,7 @@ _gtfs_cache: Dict[str, Any] = {
     "trips_by_route": {},
     "stop_times_by_trip": {},
     "stop_times_by_stop": {},
+    "route_by_short_name": {},  # Lookup by short name for real-time matching
     "loaded": False,
     "load_time": None,
 }
@@ -171,7 +171,7 @@ def load_gtfs_static() -> bool:
                 except ValueError:
                     pass
 
-            _gtfs_cache["route_by_id"][route_id] = {
+            route_data = {
                 "route_id": route_id,
                 "route_short_name": route_short_name,
                 "route_long_name": route_long_name,
@@ -181,6 +181,12 @@ def load_gtfs_static() -> bool:
                 "color": color,
                 "category": category,
             }
+            _gtfs_cache["route_by_id"][route_id] = route_data
+
+            # Also index by short name for real-time feed matching
+            # (RT feed uses "66" but GTFS uses "66-20776")
+            if route_short_name not in _gtfs_cache["route_by_short_name"]:
+                _gtfs_cache["route_by_short_name"][route_short_name] = route_data
 
         # Trip by ID and trips by route
         for _, row in _gtfs_cache["trips"].iterrows():
@@ -231,7 +237,7 @@ def load_gtfs_static() -> bool:
         _gtfs_cache["loaded"] = True
         _gtfs_cache["load_time"] = datetime.now()
 
-        print(f"✅ GTFS data loaded:")
+        print("✅ GTFS data loaded:")
         print(f"   • {len(_gtfs_cache['stop_by_id'])} stops")
         print(f"   • {len(_gtfs_cache['route_by_id'])} routes")
         print(f"   • {len(_gtfs_cache['trip_by_id'])} trips")
@@ -276,9 +282,14 @@ async def fetch_vehicle_positions() -> List[Dict]:
                     ):
                         route_id = _gtfs_cache["trip_by_id"][trip_id].get("route_id")
 
+                    # Get route info - try by ID first, then by short name
                     route_info = _gtfs_cache.get("route_by_id", {}).get(
                         str(route_id), {}
                     )
+                    if not route_info:
+                        route_info = _gtfs_cache.get("route_by_short_name", {}).get(
+                            str(route_id), {}
+                        )
 
                     vehicles.append(
                         {
@@ -362,10 +373,15 @@ async def fetch_trip_updates() -> List[Dict]:
                     trip_id = tu.trip.trip_id if tu.HasField("trip") else None
                     route_id = tu.trip.route_id if tu.HasField("trip") else None
 
-                    # Get route info
+                    # Get route info - try by ID first, then by short name
+                    # (RT feed uses "66" but GTFS uses "66-20776")
                     route_info = _gtfs_cache.get("route_by_id", {}).get(
                         str(route_id), {}
                     )
+                    if not route_info:
+                        route_info = _gtfs_cache.get("route_by_short_name", {}).get(
+                            str(route_id), {}
+                        )
                     trip_info = _gtfs_cache.get("trip_by_id", {}).get(str(trip_id), {})
 
                     stop_time_updates = []
@@ -427,8 +443,7 @@ async def fetch_trip_updates() -> List[Dict]:
                             "vehicle_type": route_info.get("vehicle_type"),
                             "line": route_info.get("line"),
                             "color": route_info.get("color"),
-                            "headsign": trip_info.get("trip_headsign")
-                            or (tu.trip.trip_headsign if tu.HasField("trip") else None),
+                            "headsign": trip_info.get("trip_headsign"),
                             "direction_id": trip_info.get("direction_id"),
                             "start_time": (
                                 tu.trip.start_time if tu.HasField("trip") else None
@@ -467,7 +482,7 @@ async def refresh_realtime_data() -> None:
     ):
         return
 
-    print(f"🔄 Refreshing real-time data...")
+    print("🔄 Refreshing real-time data...")
 
     # Fetch both in parallel
     vehicles, updates = await asyncio.gather(

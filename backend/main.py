@@ -279,9 +279,14 @@ async def trip_plan_endpoint(
     dest_lng: float = Query(..., description="Destination longitude"),
     dest_lat: float = Query(..., description="Destination latitude"),
     prefer_lrt: bool = Query(True, description="Prefer CTrain routes"),
+    leave_time: Optional[int] = Query(None, description="Unix timestamp for departure"),
+    arrive_by: Optional[int] = Query(None, description="Unix timestamp for arrival"),
+    accessibility: str = Query("none", description="Accessibility preference: none, strict, or prioritize_step_free"),
 ):
     """
     Plan a transit trip from origin to destination.
+    
+    Uses Transit API if configured, falls back to GTFS-based routing.
     Returns walking and transit segments.
     """
     try:
@@ -289,6 +294,9 @@ async def trip_plan_endpoint(
             origin=(origin_lng, origin_lat),
             destination=(dest_lng, dest_lat),
             prefer_lrt=prefer_lrt,
+            leave_time=leave_time,
+            arrive_by=arrive_by,
+            accessibility=accessibility,
         )
         return result
     except ValueError as e:
@@ -304,6 +312,9 @@ async def trip_plan_post(
     dest_lng: float = Query(..., description="Destination longitude"),
     dest_lat: float = Query(..., description="Destination latitude"),
     prefer_lrt: bool = Query(True, description="Prefer CTrain routes"),
+    leave_time: Optional[int] = Query(None, description="Unix timestamp for departure"),
+    arrive_by: Optional[int] = Query(None, description="Unix timestamp for arrival"),
+    accessibility: str = Query("none", description="Accessibility preference: none, strict, or prioritize_step_free"),
 ):
     """Plan a transit trip (POST version)"""
     return await trip_plan_endpoint(
@@ -312,6 +323,9 @@ async def trip_plan_post(
         dest_lng=dest_lng,
         dest_lat=dest_lat,
         prefer_lrt=prefer_lrt,
+        leave_time=leave_time,
+        arrive_by=arrive_by,
+        accessibility=accessibility,
     )
 
 

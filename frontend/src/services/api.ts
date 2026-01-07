@@ -31,7 +31,7 @@ export const stationApi = {
       let url = "/lrt/stations/sorted";
       if (line) {
         const lineParam = line === "Red" ? "RED" : "BLUE";
-        url = `/lrt/stations/sorted/${lineParam}`;
+        url = `/lrt/stations/sorted?line=${lineParam}`;
       }
 
       const response = await api.get<GeoJSONFeatureCollection>(url);

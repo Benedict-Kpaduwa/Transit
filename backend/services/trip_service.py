@@ -1,10 +1,11 @@
 """
 Trip Planning Service
-Provides journey planning using GTFS data - finding routes between two locations
+Provides journey planning using GTFS data and Transit API
 """
 
 import math
-from datetime import datetime, timedelta
+import os
+import time
 from typing import Dict, List, Optional, Tuple
 
 import httpx
@@ -14,11 +15,262 @@ from services.gtfs_service import (
     get_all_stops,
     get_route,
     get_routes_serving_stop,
-    get_scheduled_stop_times,
     get_stop,
     get_trip,
     get_trip_stop_times,
 )
+
+# Transit API Configuration
+TRANSIT_API_KEY = settings.transit_api_key or ""
+TRANSIT_API_BASE_URL = "https://external.transitapp.com/v3/public"
+
+
+async def plan_trip_with_transit_api(
+    origin_lat: float,
+    origin_lng: float,
+    dest_lat: float,
+    dest_lng: float,
+    leave_time: Optional[int] = None,
+    arrive_by: Optional[int] = None,
+    accessibility: str = "none",
+) -> Optional[Dict]:
+    """
+    Plan a trip using the Transit App API.
+    
+    This provides professional-grade multimodal trip planning with real-time data.
+    
+    Args:
+        origin_lat: Origin latitude
+        origin_lng: Origin longitude  
+        dest_lat: Destination latitude
+        dest_lng: Destination longitude
+        leave_time: Unix timestamp for departure (optional)
+        arrive_by: Unix timestamp for desired arrival (optional)
+        accessibility: "none", "strict", or "prioritize_step_free"
+        
+    Returns:
+        Trip plan from Transit API, or None if API unavailable/fails
+    """
+    if not TRANSIT_API_KEY:
+        print("⚠️ TRANSIT_API_KEY not configured - falling back to GTFS routing")
+        return None
+    
+    try:
+        params = {
+            "from_lat": origin_lat,
+            "from_lon": origin_lng,
+            "to_lat": dest_lat,
+            "to_lon": dest_lng,
+            "primary_mode": "transit",
+            "include_directions": "true",
+            "accessibility": accessibility,
+        }
+        
+        if leave_time:
+            params["leave_time"] = leave_time
+        elif arrive_by:
+            params["arrival_time"] = arrive_by
+        else:
+            # Default to current time
+            params["leave_time"] = int(time.time())
+        
+        headers = {
+            "apiKey": TRANSIT_API_KEY,
+            "Accept": "application/json",
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{TRANSIT_API_BASE_URL}/plan",
+                params=params,
+                headers=headers,
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return transform_transit_api_response(data, origin_lat, origin_lng, dest_lat, dest_lng)
+            elif response.status_code == 401:
+                print("❌ Transit API: Invalid API key")
+                return None
+            elif response.status_code == 429:
+                print("⚠️ Transit API: Rate limit exceeded")
+                return None
+            else:
+                print(f"⚠️ Transit API error: {response.status_code} - {response.text[:200]}")
+                return None
+                
+    except httpx.TimeoutException:
+        print("⚠️ Transit API timeout")
+        return None
+    except Exception as e:
+        print(f"⚠️ Transit API error: {str(e)}")
+        return None
+
+
+def transform_transit_api_response(
+    api_response: Dict,
+    origin_lat: float,
+    origin_lng: float,
+    dest_lat: float,
+    dest_lng: float,
+) -> Dict:
+    """Transform Transit API response to our internal format"""
+    
+    itineraries = api_response.get("plan", {}).get("itineraries", [])
+    
+    if not itineraries:
+        return {
+            "success": False,
+            "error": "No routes found",
+            "suggestion": "Try adjusting your departure time or location",
+        }
+    
+    # Use the first (best) itinerary
+    itinerary = itineraries[0]
+    
+    segments = []
+    total_walking_distance = 0
+    transit_lines = []
+    
+    for leg in itinerary.get("legs", []):
+        mode = leg.get("mode", "").upper()
+        
+        if mode == "WALK":
+            distance = leg.get("distance", 0)
+            total_walking_distance += distance
+            
+            segments.append({
+                "type": "walk",
+                "instruction": f"Walk to {leg.get('to', {}).get('name', 'destination')}",
+                "from": {
+                    "name": leg.get("from", {}).get("name", "Origin"),
+                    "coordinates": [
+                        leg.get("from", {}).get("lon", origin_lng),
+                        leg.get("from", {}).get("lat", origin_lat),
+                    ],
+                },
+                "to": {
+                    "name": leg.get("to", {}).get("name", "Destination"),
+                    "stop_id": leg.get("to", {}).get("stopId"),
+                    "coordinates": [
+                        leg.get("to", {}).get("lon", dest_lng),
+                        leg.get("to", {}).get("lat", dest_lat),
+                    ],
+                },
+                "distance": int(distance),
+                "duration": leg.get("duration", 0),
+                "geometry": leg.get("legGeometry"),
+            })
+        else:
+            # Transit leg (BUS, SUBWAY, RAIL, TRAM, etc.)
+            route_short_name = leg.get("routeShortName", leg.get("route", ""))
+            transit_lines.append(route_short_name)
+            
+            # Determine vehicle type
+            vehicle_type = "Bus"
+            if mode in ["SUBWAY", "RAIL", "TRAM"]:
+                vehicle_type = "CTrain"
+            
+            # Determine color
+            color = leg.get("routeColor", "#22c55e")
+            if not color.startswith("#"):
+                color = f"#{color}"
+            
+            # Get intermediate stops
+            stops = []
+            for stop in leg.get("intermediateStops", []):
+                stops.append({
+                    "stop_id": stop.get("stopId"),
+                    "stop_name": stop.get("name"),
+                    "coordinates": {
+                        "latitude": stop.get("lat"),
+                        "longitude": stop.get("lon"),
+                    },
+                    "arrival_time": stop.get("arrival"),
+                    "departure_time": stop.get("departure"),
+                })
+            
+            segments.append({
+                "type": "transit",
+                "instruction": f"Take Route {route_short_name} towards {leg.get('headsign', 'destination')}",
+                "vehicle_type": vehicle_type,
+                "route_id": leg.get("routeId"),
+                "route_short_name": route_short_name,
+                "route_long_name": leg.get("routeLongName"),
+                "line": leg.get("routeColor"),
+                "color": color,
+                "headsign": leg.get("headsign"),
+                "from": {
+                    "name": leg.get("from", {}).get("name"),
+                    "stop_id": leg.get("from", {}).get("stopId"),
+                    "coordinates": [
+                        leg.get("from", {}).get("lon"),
+                        leg.get("from", {}).get("lat"),
+                    ],
+                },
+                "to": {
+                    "name": leg.get("to", {}).get("name"),
+                    "stop_id": leg.get("to", {}).get("stopId"),
+                    "coordinates": [
+                        leg.get("to", {}).get("lon"),
+                        leg.get("to", {}).get("lat"),
+                    ],
+                },
+                "num_stops": len(leg.get("intermediateStops", [])) + 1,
+                "duration": leg.get("duration", 0),
+                "stops": stops,
+                "geometry": leg.get("legGeometry"),
+            })
+    
+    # Calculate total duration
+    total_duration = itinerary.get("duration", 0)
+    
+    # Format duration text
+    if total_duration >= 3600:
+        hours = total_duration // 3600
+        mins = (total_duration % 3600) // 60
+        duration_text = f"{hours}h {mins}min" if mins else f"{hours}h"
+    else:
+        duration_text = f"{total_duration // 60} min"
+    
+    # Format walking distance text
+    if total_walking_distance >= 1000:
+        walking_text = f"{total_walking_distance / 1000:.1f} km"
+    else:
+        walking_text = f"{int(total_walking_distance)} m"
+    
+    return {
+        "success": True,
+        "source": "transit_api",
+        "origin": {
+            "coordinates": [origin_lng, origin_lat],
+        },
+        "destination": {
+            "coordinates": [dest_lng, dest_lat],
+        },
+        "segments": segments,
+        "summary": {
+            "total_duration": total_duration,
+            "total_duration_text": duration_text,
+            "total_walking_distance": int(total_walking_distance),
+            "total_walking_distance_text": walking_text,
+            "transit_line": ", ".join(transit_lines) if transit_lines else "N/A",
+            "transit_type": segments[1].get("vehicle_type") if len(segments) > 1 else "Transit",
+            "num_transfers": len([s for s in segments if s["type"] == "transit"]) - 1,
+        },
+        "alternative_itineraries": [
+            {
+                "duration": itin.get("duration"),
+                "walking_distance": sum(
+                    leg.get("distance", 0) 
+                    for leg in itin.get("legs", []) 
+                    if leg.get("mode") == "WALK"
+                ),
+                "num_transfers": itin.get("transfers", 0),
+            }
+            for itin in itineraries[1:4]  # Include up to 3 alternatives
+        ],
+    }
 
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -45,11 +297,19 @@ def find_nearby_stops(
     radius_meters: float = 1000,
     limit: int = 10,
     vehicle_type: Optional[str] = None,
+    include_paired_platforms: bool = False,
 ) -> List[Dict]:
-    """Find stops within radius of a location"""
+    """Find stops within radius of a location
+
+    Args:
+        include_paired_platforms: If True, for CTrain stations also include
+            the opposite directional platform (NB<->SB, EB<->WB)
+    """
     all_stops = get_all_stops()
 
     nearby = []
+    found_stop_ids = set()
+
     for stop in all_stops:
         distance = haversine_distance(
             latitude, longitude, stop.get("stop_lat"), stop.get("stop_lon")
@@ -65,31 +325,105 @@ def find_nearby_stops(
             if vehicle_type and vehicle_type not in stop_vehicle_types:
                 continue
 
-            nearby.append(
-                {
-                    "stop_id": stop.get("stop_id"),
-                    "stop_code": stop.get("stop_code"),
-                    "stop_name": stop.get("stop_name"),
-                    "latitude": stop.get("stop_lat"),
-                    "longitude": stop.get("stop_lon"),
-                    "distance_meters": round(distance),
-                    "vehicle_types": list(stop_vehicle_types),
-                    "routes": [
-                        {
-                            "route_id": r.get("route_id"),
-                            "route_short_name": r.get("route_short_name"),
-                            "vehicle_type": r.get("vehicle_type"),
-                            "line": r.get("line"),
-                            "color": r.get("color"),
-                        }
-                        for r in routes[:5]
-                    ],
-                }
-            )
+            stop_entry = {
+                "stop_id": stop.get("stop_id"),
+                "stop_code": stop.get("stop_code"),
+                "stop_name": stop.get("stop_name"),
+                "latitude": stop.get("stop_lat"),
+                "longitude": stop.get("stop_lon"),
+                "distance_meters": round(distance),
+                "vehicle_types": list(stop_vehicle_types),
+                "routes": [
+                    {
+                        "route_id": r.get("route_id"),
+                        "route_short_name": r.get("route_short_name"),
+                        "vehicle_type": r.get("vehicle_type"),
+                        "line": r.get("line"),
+                        "color": r.get("color"),
+                    }
+                    for r in routes[:5]
+                ],
+            }
+            nearby.append(stop_entry)
+            found_stop_ids.add(stop.get("stop_id"))
+
+    # If include_paired_platforms, find opposite direction platforms for CTrain stations
+    if include_paired_platforms:
+        paired_stops = find_paired_ctrain_platforms(nearby, found_stop_ids)
+        nearby.extend(paired_stops)
 
     # Sort by distance and limit
     nearby.sort(key=lambda x: x["distance_meters"])
     return nearby[:limit]
+
+
+def find_paired_ctrain_platforms(
+    stops: List[Dict], found_stop_ids: set
+) -> List[Dict]:
+    """Find opposite direction platforms for CTrain stations
+
+    For each CTrain station found (e.g., 'WB 4 Street SW Station'),
+    find the opposite platform (e.g., 'EB 4 Street SW Station')
+    """
+    paired_stops = []
+    all_stops = get_all_stops()
+
+    direction_pairs = {
+        "NB ": "SB ",
+        "SB ": "NB ",
+        "EB ": "WB ",
+        "WB ": "EB ",
+    }
+
+    for stop in stops:
+        stop_name = stop.get("stop_name", "")
+
+        # Check if this is a CTrain station
+        if "CTrain" not in stop.get("vehicle_types", []):
+            continue
+
+        # Check if name starts with directional prefix
+        for prefix, opposite_prefix in direction_pairs.items():
+            if stop_name.startswith(prefix):
+                # Look for the opposite platform
+                opposite_name = opposite_prefix + stop_name[len(prefix):]
+
+                for other_stop in all_stops:
+                    other_name = other_stop.get("stop_name", "")
+                    other_id = other_stop.get("stop_id")
+
+                    if other_name == opposite_name and other_id not in found_stop_ids:
+                        # Found the paired platform
+                        routes = get_routes_serving_stop(other_id)
+                        stop_vehicle_types = set(r.get("vehicle_type") for r in routes)
+
+                        # Calculate distance (use same as original stop + small penalty)
+                        paired_distance = stop.get("distance_meters", 0) + 50
+
+                        paired_stops.append({
+                            "stop_id": other_id,
+                            "stop_code": other_stop.get("stop_code"),
+                            "stop_name": other_name,
+                            "latitude": other_stop.get("stop_lat"),
+                            "longitude": other_stop.get("stop_lon"),
+                            "distance_meters": paired_distance,
+                            "vehicle_types": list(stop_vehicle_types),
+                            "routes": [
+                                {
+                                    "route_id": r.get("route_id"),
+                                    "route_short_name": r.get("route_short_name"),
+                                    "vehicle_type": r.get("vehicle_type"),
+                                    "line": r.get("line"),
+                                    "color": r.get("color"),
+                                }
+                                for r in routes[:5]
+                            ],
+                            "is_paired_platform": True,
+                        })
+                        found_stop_ids.add(other_id)
+                break
+
+    return paired_stops
 
 
 async def geocode_location(
@@ -133,11 +467,9 @@ async def geocode_location(
         results.append(
             {
                 "name": feature.get("text"),
-                "full_address": feature.get("place_name"),
-                "coordinates": {
-                    "longitude": feature["geometry"]["coordinates"][0],
-                    "latitude": feature["geometry"]["coordinates"][1],
-                },
+                "place_name": feature.get("place_name"),
+                "coordinates": feature["geometry"]["coordinates"],  # [lng, lat] array
+                "type": feature.get("place_type", ["unknown"])[0],
             }
         )
 
@@ -245,16 +577,12 @@ def find_connecting_routes(
         # Find sequences for origin and destination
         origin_seq = None
         dest_seq = None
-        origin_time = None
-        dest_time = None
 
         for st in trip_stop_times:
             if st.get("stop_id") == str(origin_stop_id):
                 origin_seq = st.get("stop_sequence")
-                origin_time = st.get("departure_time")
             if st.get("stop_id") == str(destination_stop_id):
                 dest_seq = st.get("stop_sequence")
-                dest_time = st.get("arrival_time")
 
         # Only include if origin comes before destination (correct direction)
         if origin_seq is not None and dest_seq is not None and origin_seq < dest_seq:
@@ -325,14 +653,23 @@ async def plan_trip(
     origin: Tuple[float, float],
     destination: Tuple[float, float],
     prefer_lrt: bool = True,
+    leave_time: Optional[int] = None,
+    arrive_by: Optional[int] = None,
+    accessibility: str = "none",
 ) -> Dict:
     """
     Plan a transit trip from origin to destination.
 
+    Uses Transit API for professional-grade routing if API key is configured,
+    falls back to GTFS-based routing otherwise.
+
     Args:
         origin: (longitude, latitude) of start
         destination: (longitude, latitude) of end
-        prefer_lrt: Whether to prefer CTrain routes
+        prefer_lrt: Whether to prefer CTrain routes (GTFS fallback only)
+        leave_time: Unix timestamp for departure (Transit API only)
+        arrive_by: Unix timestamp for arrival (Transit API only)
+        accessibility: "none", "strict", or "prioritize_step_free" (Transit API only)
 
     Returns:
         Trip plan with walking and transit segments
@@ -340,19 +677,42 @@ async def plan_trip(
     origin_lng, origin_lat = origin
     dest_lng, dest_lat = destination
 
+    # Try Transit API first (if configured)
+    if TRANSIT_API_KEY:
+        transit_result = await plan_trip_with_transit_api(
+            origin_lat=origin_lat,
+            origin_lng=origin_lng,
+            dest_lat=dest_lat,
+            dest_lng=dest_lng,
+            leave_time=leave_time,
+            arrive_by=arrive_by,
+            accessibility=accessibility,
+        )
+        
+        if transit_result and transit_result.get("success"):
+            return transit_result
+        
+        # If Transit API failed but returned an error, still try GTFS fallback
+        print("📍 Transit API didn't return route, trying GTFS fallback...")
+
+    # Fallback to GTFS-based routing
+
     # Find nearby stops at origin and destination
+    # include_paired_platforms ensures we get both directional CTrain platforms
     origin_stops = find_nearby_stops(
         origin_lat,
         origin_lng,
         radius_meters=1500,
-        limit=10,
+        limit=20,  # Increased limit to include paired platforms
+        include_paired_platforms=True,
     )
 
     dest_stops = find_nearby_stops(
         dest_lat,
         dest_lng,
         radius_meters=1500,
-        limit=10,
+        limit=20,  # Increased limit to include paired platforms
+        include_paired_platforms=True,
     )
 
     if not origin_stops:
@@ -388,8 +748,9 @@ async def plan_trip(
         )
 
     # Try each combination of origin/destination stops
-    for origin_stop in origin_stops[:5]:
-        for dest_stop in dest_stops[:5]:
+    # Increased from 5 to 10 to better handle directional platforms
+    for origin_stop in origin_stops[:10]:
+        for dest_stop in dest_stops[:10]:
             # Find connecting routes
             routes = find_connecting_routes(
                 origin_stop.get("stop_id"), dest_stop.get("stop_id")
@@ -456,9 +817,21 @@ async def plan_trip(
         (origin_stop.get("longitude"), origin_stop.get("latitude")),
     )
 
+    walk_to_distance = (
+        walk_to.get("distance_meters")
+        if walk_to
+        else origin_stop.get("distance_meters", 0)
+    )
+    walk_to_duration_sec = (
+        walk_to.get("duration_seconds")
+        if walk_to
+        else round(origin_stop.get("distance_meters", 0) / 1.4)  # ~1.4 m/s walking
+    )
+
     segments.append(
         {
             "type": "walk",
+            "instruction": f"Walk to {origin_stop.get('stop_name')}",
             "from": {
                 "name": "Origin",
                 "coordinates": [origin_lng, origin_lat],
@@ -471,16 +844,8 @@ async def plan_trip(
                     origin_stop.get("latitude"),
                 ],
             },
-            "distance_meters": (
-                walk_to.get("distance_meters")
-                if walk_to
-                else origin_stop.get("distance_meters")
-            ),
-            "duration_minutes": (
-                walk_to.get("duration_minutes")
-                if walk_to
-                else round(origin_stop.get("distance_meters", 0) / 80, 1)
-            ),
+            "distance": walk_to_distance,
+            "duration": walk_to_duration_sec,
             "geometry": walk_to.get("geometry") if walk_to else None,
         }
     )
@@ -496,16 +861,30 @@ async def plan_trip(
         dest_stop.get("stop_id"),
     )
 
+    # Estimate transit duration: ~2 min per stop for CTrain, ~3 min for bus
+    stops_count = route.get("stops_count", 1)
+    transit_duration_sec = stops_count * (120 if route.get("vehicle_type") == "CTrain" else 180)
+
+    vehicle_type = route.get("vehicle_type", "Transit")
+    line_name = route.get("line") or route.get("route_short_name", "")
+    headsign = route.get("headsign", "")
+
+    if vehicle_type == "CTrain":
+        instruction = f"Take {line_name} towards {headsign}" if headsign else f"Take {line_name}"
+    else:
+        instruction = f"Take Route {route.get('route_short_name')} towards {headsign}" if headsign else f"Take Route {route.get('route_short_name')}"
+
     segments.append(
         {
             "type": "transit",
-            "vehicle_type": route.get("vehicle_type"),
+            "instruction": instruction,
+            "vehicle_type": vehicle_type,
             "route_id": route.get("route_id"),
             "route_short_name": route.get("route_short_name"),
             "route_long_name": route.get("route_long_name"),
             "line": route.get("line"),
             "color": route.get("color"),
-            "headsign": route.get("headsign"),
+            "headsign": headsign,
             "from": {
                 "name": origin_stop.get("stop_name"),
                 "stop_id": origin_stop.get("stop_id"),
@@ -519,7 +898,8 @@ async def plan_trip(
                 "stop_id": dest_stop.get("stop_id"),
                 "coordinates": [dest_stop.get("longitude"), dest_stop.get("latitude")],
             },
-            "stops_count": route.get("stops_count"),
+            "num_stops": stops_count,
+            "duration": transit_duration_sec,
             "stops": intermediate,
         }
     )
@@ -529,9 +909,21 @@ async def plan_trip(
         (dest_stop.get("longitude"), dest_stop.get("latitude")), (dest_lng, dest_lat)
     )
 
+    walk_from_distance = (
+        walk_from.get("distance_meters")
+        if walk_from
+        else dest_stop.get("distance_meters", 0)
+    )
+    walk_from_duration_sec = (
+        walk_from.get("duration_seconds")
+        if walk_from
+        else round(dest_stop.get("distance_meters", 0) / 1.4)
+    )
+
     segments.append(
         {
             "type": "walk",
+            "instruction": "Walk to destination",
             "from": {
                 "name": dest_stop.get("stop_name"),
                 "stop_id": dest_stop.get("stop_id"),
@@ -541,27 +933,37 @@ async def plan_trip(
                 "name": "Destination",
                 "coordinates": [dest_lng, dest_lat],
             },
-            "distance_meters": (
-                walk_from.get("distance_meters")
-                if walk_from
-                else dest_stop.get("distance_meters")
-            ),
-            "duration_minutes": (
-                walk_from.get("duration_minutes")
-                if walk_from
-                else round(dest_stop.get("distance_meters", 0) / 80, 1)
-            ),
+            "distance": walk_from_distance,
+            "duration": walk_from_duration_sec,
             "geometry": walk_from.get("geometry") if walk_from else None,
         }
     )
 
     # Calculate totals
-    total_walk = sum(
-        s.get("distance_meters", 0) for s in segments if s["type"] == "walk"
+    total_walk_distance = sum(
+        s.get("distance", 0) for s in segments if s["type"] == "walk"
     )
-    total_walk_time = sum(
-        s.get("duration_minutes", 0) for s in segments if s["type"] == "walk"
+    total_duration_sec = sum(
+        s.get("duration", 0) for s in segments
     )
+
+    # Format duration text
+    total_mins = round(total_duration_sec / 60)
+    if total_mins >= 60:
+        hours = total_mins // 60
+        mins = total_mins % 60
+        duration_text = f"{hours}h {mins}min" if mins else f"{hours}h"
+    else:
+        duration_text = f"{total_mins} min"
+
+    # Format walking distance text
+    if total_walk_distance >= 1000:
+        walk_text = f"{total_walk_distance / 1000:.1f} km"
+    else:
+        walk_text = f"{round(total_walk_distance)} m"
+
+    vehicle_type = route.get("vehicle_type", "Transit")
+    line_name = route.get("line") or route.get("route_short_name", "")
 
     return {
         "success": True,
@@ -573,12 +975,12 @@ async def plan_trip(
         },
         "segments": segments,
         "summary": {
-            "total_walking_meters": total_walk,
-            "total_walking_minutes": round(total_walk_time, 1),
-            "transit_stops": route.get("stops_count"),
-            "vehicle_type": route.get("vehicle_type"),
-            "route": route.get("route_short_name"),
-            "line": route.get("line"),
+            "total_duration": total_duration_sec,
+            "total_duration_text": duration_text,
+            "total_walking_distance": total_walk_distance,
+            "total_walking_distance_text": walk_text,
+            "transit_line": line_name,
+            "transit_type": vehicle_type,
         },
         "alternative_routes": best_route.get("all_routes", [])[:3],
     }
@@ -610,8 +1012,6 @@ async def find_transfer_route(
     if lrt_origin_stops and not lrt_dest_stops:
         # Find LRT stations that have bus connections near destination
         for lrt_stop in lrt_origin_stops:
-            lrt_stop_id = lrt_stop.get("stop_id")
-
             # Find LRT routes from this stop
             lrt_routes = [
                 r
@@ -671,6 +1071,82 @@ async def find_transfer_route(
                                     dest_stop,
                                     bus_routes[0],
                                 )
+
+    # If dest has LRT but origin doesn't, try Bus -> CTrain
+    # This handles cases like going from a residential area to downtown
+    if lrt_dest_stops and not lrt_origin_stops:
+        bus_origin_stops = [
+            s for s in origin_stops if "Bus" in s.get("vehicle_types", [])
+        ]
+        
+        for dest_lrt_stop in lrt_dest_stops:
+            # Get CTrain routes at destination
+            lrt_routes = [
+                r
+                for r in dest_lrt_stop.get("routes", [])
+                if r.get("vehicle_type") == "CTrain"
+            ]
+            
+            if not lrt_routes:
+                continue
+            
+            # For each CTrain route, find stations that have bus connections from origin
+            for lrt_route in lrt_routes:
+                route_id = lrt_route.get("route_id")
+                trips = _gtfs_cache.get("trips_by_route", {}).get(str(route_id), [])
+                
+                # Get all CTrain stops on this line
+                ctrain_stops_on_route = set()
+                for trip_id in trips[:10]:
+                    trip_stop_times = get_trip_stop_times(trip_id)
+                    for st in trip_stop_times:
+                        ctrain_stops_on_route.add(st.get("stop_id"))
+                
+                # For each CTrain station, check if there's a bus from origin
+                for ctrain_station_id in ctrain_stops_on_route:
+                    ctrain_station = get_stop(ctrain_station_id)
+                    if not ctrain_station:
+                        continue
+                    
+                    # Find bus stops near this CTrain station
+                    nearby_bus_stops = find_nearby_stops(
+                        ctrain_station.get("stop_lat"),
+                        ctrain_station.get("stop_lon"),
+                        radius_meters=500,
+                        vehicle_type="Bus",
+                        limit=10,
+                    )
+                    
+                    # Check if any origin bus stop connects to a bus stop near this CTrain station
+                    for origin_bus_stop in bus_origin_stops:
+                        for transfer_bus_stop in nearby_bus_stops:
+                            # Check if there's a bus route connecting origin to this transfer point
+                            bus_routes = find_connecting_routes(
+                                origin_bus_stop.get("stop_id"),
+                                transfer_bus_stop.get("stop_id")
+                            )
+                            
+                            if bus_routes:
+                                # Check if CTrain connects from transfer to destination
+                                ctrain_routes = find_connecting_routes(
+                                    ctrain_station_id,
+                                    dest_lrt_stop.get("stop_id")
+                                )
+                                
+                                if ctrain_routes:
+                                    # Found a Bus -> CTrain transfer route!
+                                    return await build_transfer_trip(
+                                        origin_lng,
+                                        origin_lat,
+                                        dest_lng,
+                                        dest_lat,
+                                        origin_bus_stop,        # First transit stop (bus)
+                                        transfer_bus_stop.get("stop_id"),  # Transfer point
+                                        bus_routes[0],          # Bus route
+                                        ctrain_station,         # CTrain station dict
+                                        dest_lrt_stop,          # Final LRT stop
+                                        ctrain_routes[0],       # CTrain route
+                                    )
 
     return None
 

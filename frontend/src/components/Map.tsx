@@ -23,13 +23,13 @@ import { MapContext } from "@/context/map-context";
 import MapSearch from "@/components/map/map-search";
 import MapStyles from "@/components/map/map-styles";
 import MapControls from "@/components/map/map-controls";
-import StationSearch from "@/components/map/station-search";
 import Train3DLayer, {
   type TrainPositionData,
 } from "@/components/map/train-3d-layer";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 import { useTheme } from "@/stores/use-theme-store";
 import NearbyArrivals from "@/components/NearbyArrivals";
+import { useSidebar } from "@/components/ui/sidebar";
 
 // Map themes to Mapbox styles
 const MAPBOX_STYLES = {
@@ -96,6 +96,9 @@ const Map = ({
 
   // Theme for map style
   const { resolvedTheme } = useTheme();
+
+  // Get sidebar state for triggering map resize
+  const { state: sidebarState } = useSidebar();
 
   const mapboxToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
@@ -234,6 +237,18 @@ const Map = ({
       mapRef.current.setStyle(MAPBOX_STYLES[resolvedTheme]);
     }
   }, [resolvedTheme, mapLoaded]);
+
+  // Resize map when sidebar collapses/expands to prevent dark space
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+
+    // Wait for sidebar transition to complete (300ms is the sidebar transition duration)
+    const timeoutId = setTimeout(() => {
+      mapRef.current?.resize();
+    }, 350);
+
+    return () => clearTimeout(timeoutId);
+  }, [sidebarState, mapLoaded]);
 
   // Sync showTrainLines ref for style.load event
   useEffect(() => {
@@ -438,6 +453,7 @@ const Map = ({
       ).coordinates.slice() as [number, number];
       const name = feature.properties?.name || "Bus Stop";
       const code = feature.properties?.code || "";
+      const stopId = feature.properties?.id || "";
 
       // Parse routes and route names from JSON strings
       let routes: string[] = [];
@@ -450,55 +466,208 @@ const Map = ({
         routeNames = [];
       }
 
-      // Create routes display HTML - show route number with name
+      // Generate unique route colors based on route number
+      const getRouteColor = (route: string) => {
+        // BRT/MAX routes
+        if (route === "301") return "#f97316"; // MAX Orange
+        if (route === "302") return "#a855f7"; // MAX Purple
+        if (route === "303") return "#eab308"; // MAX Yellow
+        if (route === "305") return "#14b8a6"; // MAX Teal
+        if (route === "306") return "#3b82f6"; // MAX Blue
+        if (route === "307") return "#22c55e"; // MAX Green
+        // Express routes (400s)
+        const num = parseInt(route);
+        if (num >= 400 && num < 500) return "#ef4444"; // Red for express
+        // Regular routes - green
+        return "#22c55e";
+      };
+
+      // Create routes display HTML - modern design
       const routesHtml =
         routes.length > 0
-          ? `<div style="margin-top: 8px;">
-              <p style="margin: 0 0 6px; font-size: 11px; color: #888; font-weight: 500;">Routes serving this stop:</p>
-              <div style="display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto;">
+          ? `
+            <div style="margin-top: 12px;">
+              <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #71717a; font-weight: 600; margin-bottom: 8px;">
+                Routes at this stop
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px;">
                 ${routes
-                  .slice(0, 8)
+                  .slice(0, 10)
                   .map((r, idx) => {
-                    // Try to find a matching route name
-                    const routeName =
-                      routeNames[idx] ||
-                      routeNames.find((n) =>
-                        n?.toLowerCase().includes(r.toLowerCase())
-                      ) ||
-                      "";
-                    return `<div style="display: flex; align-items: center; gap: 6px;">
-                      <span style="background: #22c55e; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; min-width: 28px; text-align: center;">${r}</span>
-                      ${
-                        routeName
-                          ? `<span style="font-size: 11px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;">${routeName}</span>`
-                          : ""
-                      }
-                    </div>`;
+                    const color = getRouteColor(r);
+                    const routeName = routeNames[idx] || "";
+                    const isMAX = r.startsWith("30") && r.length === 3;
+                    const displayName = isMAX
+                      ? routeName.replace("MAX ", "")
+                      : r;
+                    return `<div style="display: flex; align-items: center; gap: 4px; background: ${color}15; border: 1px solid ${color}40; padding: 4px 8px; border-radius: 8px; cursor: default;" title="${
+                      routeName || `Route ${r}`
+                    }"><span style="background: ${color}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 700; min-width: 20px; text-align: center;">${r}</span>${
+                      routeName
+                        ? `<span style="font-size: 10px; color: #52525b; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${
+                            isMAX ? displayName : routeName
+                          }</span>`
+                        : ""
+                    }</div>`;
                   })
                   .join("")}
                 ${
-                  routes.length > 8
-                    ? `<span style="color: #666; font-size: 11px; padding-top: 4px;">+${
-                        routes.length - 8
-                      } more routes</span>`
+                  routes.length > 10
+                    ? `<div style="
+                        background: #27272a;
+                        color: #a1a1aa;
+                        padding: 4px 10px;
+                        border-radius: 8px;
+                        font-size: 11px;
+                        font-weight: 500;
+                      ">+${routes.length - 10} more</div>`
                     : ""
                 }
               </div>
-            </div>`
-          : "";
+            </div>
+          `
+          : `<div style="margin-top: 12px; color: #71717a; font-size: 12px; text-align: center; padding: 8px; background: #18181b; border-radius: 8px;">No route information</div>`;
 
-      new mapboxgl.Popup()
+      new mapboxgl.Popup({
+        className: "bus-stop-popup",
+        maxWidth: "320px",
+      })
         .setLngLat(coordinates)
         .setHTML(
           `
-          <div style="padding: 10px; font-family: system-ui; min-width: 200px; max-width: 280px;">
-            <strong style="font-size: 14px; color: #111;">${name}</strong>
-            ${
-              code
-                ? `<p style="margin: 4px 0 0; font-size: 12px; color: #666;">Stop #${code}</p>`
-                : ""
-            }
-            ${routesHtml}
+          <div style="
+            font-family: system-ui, -apple-system, sans-serif;
+            min-width: 260px;
+            max-width: 300px;
+            background: linear-gradient(180deg, #18181b 0%, #09090b 100%);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+          ">
+            <!-- Header -->
+            <div style="
+              background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+              padding: 16px;
+              display: flex;
+              align-items: center;
+              gap: 12px;
+            ">
+              <div style="
+                background: rgba(255,255,255,0.2);
+                padding: 10px;
+                border-radius: 12px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+              ">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M8 6v6"/>
+                  <path d="M16 6v6"/>
+                  <path d="M2 12h20"/>
+                  <path d="M18 18H6a4 4 0 0 1-4-4V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v8a4 4 0 0 1-4 4Z"/>
+                  <circle cx="7" cy="18" r="2"/>
+                  <circle cx="17" cy="18" r="2"/>
+                </svg>
+              </div>
+              <div style="flex: 1; min-width: 0;">
+                <div style="
+                  font-size: 15px;
+                  font-weight: 700;
+                  color: white;
+                  line-height: 1.3;
+                  word-wrap: break-word;
+                ">${name}</div>
+                ${
+                  code
+                    ? `<div style="
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 4px;
+                        margin-top: 4px;
+                        background: rgba(255,255,255,0.2);
+                        padding: 2px 8px;
+                        border-radius: 4px;
+                        font-size: 11px;
+                        color: rgba(255,255,255,0.9);
+                        font-weight: 600;
+                      ">
+                        <span>Stop #${code}</span>
+                      </div>`
+                    : ""
+                }
+              </div>
+            </div>
+
+            <!-- Content -->
+            <div style="padding: 12px 16px 16px;">
+              ${routesHtml}
+
+              <!-- Actions -->
+              <div style="
+                display: flex;
+                gap: 8px;
+                margin-top: 16px;
+              ">
+                <button
+                  onclick="navigator.clipboard.writeText('${code || stopId}')"
+                  style="
+                    flex: 1;
+                    background: #27272a;
+                    border: 1px solid #3f3f46;
+                    border-radius: 10px;
+                    padding: 10px;
+                    color: #fafafa;
+                    font-size: 12px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 6px;
+                    transition: all 0.2s;
+                  "
+                  onmouseover="this.style.background='#3f3f46'"
+                  onmouseout="this.style.background='#27272a'"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  Copy Stop ID
+                </button>
+                <a
+                  href="https://www.google.com/maps/dir/?api=1&destination=${
+                    coordinates[1]
+                  },${coordinates[0]}&travelmode=walking"
+                  target="_blank"
+                  style="
+                    flex: 1;
+                    background: #22c55e;
+                    border: none;
+                    border-radius: 10px;
+                    padding: 10px;
+                    color: white;
+                    font-size: 12px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 6px;
+                    text-decoration: none;
+                    transition: all 0.2s;
+                  "
+                  onmouseover="this.style.background='#16a34a'"
+                  onmouseout="this.style.background='#22c55e'"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="10" r="3"/>
+                    <path d="M12 2a8 8 0 0 0-8 8c0 1.892.402 3.13 1.5 4.5L12 22l6.5-7.5c1.098-1.37 1.5-2.608 1.5-4.5a8 8 0 0 0-8-8Z"/>
+                  </svg>
+                  Directions
+                </a>
+              </div>
+            </div>
           </div>
         `
         )
@@ -1069,7 +1238,7 @@ const Map = ({
 
         {/* Nearby Arrivals - left side panel */}
         {mapLoaded && userLocation && (
-          <div className="absolute top-20 left-4 z-10 w-[320px]">
+          <div className="absolute top-28 left-7 z-10 w-[320px]">
             <NearbyArrivals
               userLocation={userLocation}
               onStopClick={(_stopId, coords) => {

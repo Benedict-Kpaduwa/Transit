@@ -277,6 +277,17 @@
   display: none !important;
 }
 
+/* Bus Stop Popup Specific Styles */
+.bus-stop-popup .mapboxgl-popup-content {
+  background: transparent !important;
+  border-radius: 16px !important;
+  overflow: visible !important;
+}
+
+.bus-stop-popup {
+  filter: drop-shadow(0 25px 25px rgba(0, 0, 0, 0.3));
+}
+
 /* View Transition Wave Effect */
 ::view-transition-old(root),
 ::view-transition-new(root) {

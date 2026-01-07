@@ -4,17 +4,15 @@ Provides real-time arrival predictions for transit stops - like the Transit app!
 """
 
 import math
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Dict, Optional
 
 from services.gtfs_service import (
     get_all_stops,
     get_realtime_arrivals,
     get_route,
     get_routes_serving_stop,
-    get_scheduled_stop_times,
     get_stop,
-    get_trip,
     get_vehicle_positions,
     refresh_realtime_data,
 )
@@ -146,18 +144,35 @@ async def get_nearby_stops_with_arrivals(
 
     # Get arrivals for each stop
     nearby_stops = []
-    for stop in stops_with_distance[:limit_stops]:
+    stops_checked = 0
+    max_stops_to_check = limit_stops * 4  # Check more stops if filtering
+
+    for stop in stops_with_distance:
+        if len(nearby_stops) >= limit_stops or stops_checked >= max_stops_to_check:
+            break
+
+        stops_checked += 1
         stop_id = stop.get("stop_id")
+
+        # Get routes serving this stop to check vehicle type
+        routes = get_routes_serving_stop(stop_id)
+
+        # If filtering by vehicle type, check if this stop has matching routes
+        if vehicle_type_filter:
+            matching_routes = [
+                r for r in routes if r.get("vehicle_type") == vehicle_type_filter
+            ]
+            if not matching_routes:
+                continue  # Skip this stop if no matching routes
+            routes = matching_routes  # Only show matching routes
+
         arrivals = await get_realtime_arrivals(stop_id)
 
-        # Apply filter
+        # Apply arrival filter
         if vehicle_type_filter:
             arrivals = [
                 a for a in arrivals if a.get("vehicle_type") == vehicle_type_filter
             ]
-
-        # Get routes serving this stop
-        routes = get_routes_serving_stop(stop_id)
 
         nearby_stops.append(
             {
