@@ -100,6 +100,8 @@ const Map = ({
   // Trip planning state
   const [tripPlan, setTripPlan] = useState<TripPlan | null>(null);
   const tripMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  // Counter to trigger trip route redraw after style changes
+  const [styleChangeCounter, setStyleChangeCounter] = useState(0);
 
   // External destination for "Get Directions" from search results
   const [externalDestination, setExternalDestination] = useState<{
@@ -240,6 +242,8 @@ const Map = ({
       const currentTheme = useTheme.getState().resolvedTheme;
       // Preserve current showTrainLines state on style changes using ref
       setupMapLayers(map, routeLines, currentTheme, showTrainLinesRef.current);
+      // Trigger trip route redraw after style is fully loaded (with small delay to ensure readiness)
+      setTimeout(() => setStyleChangeCounter((c) => c + 1), 100);
     });
 
     return () => {
@@ -818,20 +822,18 @@ const Map = ({
       toCoords: [number, number],
       lineName: string
     ): [number, number][] => {
-      // Find the route line for this train line
+      // Find ALL route lines for this train line (may have multiple branches)
       const targetLine = lineName.includes("Red") ? "RED" : "BLUE";
-      const trackLine = routeLines.find(
+      const matchingTracks = routeLines.filter(
         (r) => r.properties.line === targetLine
       );
 
-      if (!trackLine || trackLine.coordinates.length < 2) {
+      if (matchingTracks.length === 0) {
         return [fromCoords, toCoords]; // Fallback to direct line
       }
 
-      const coords = trackLine.coordinates;
-
-      // Find closest point indices on the track for from and to
-      const findClosestIndex = (point: [number, number]): number => {
+      // Helper to find closest point index and distance
+      const findClosestPoint = (coords: [number, number][], point: [number, number]) => {
         let closestIdx = 0;
         let minDist = Infinity;
         for (let i = 0; i < coords.length; i++) {
@@ -843,18 +845,81 @@ const Map = ({
             closestIdx = i;
           }
         }
-        return closestIdx;
+        return { idx: closestIdx, dist: minDist };
       };
 
-      const fromIdx = findClosestIndex(fromCoords);
-      const toIdx = findClosestIndex(toCoords);
+      // Find the track that best covers both endpoints (minimizes total distance to endpoints)
+      let bestTrack: [number, number][] | null = null;
+      let bestScore = Infinity;
+      let bestFromIdx = 0;
+      let bestToIdx = 0;
+
+      for (const track of matchingTracks) {
+        if (!track.coordinates || track.coordinates.length < 2) continue;
+        
+        const fromResult = findClosestPoint(track.coordinates, fromCoords);
+        const toResult = findClosestPoint(track.coordinates, toCoords);
+        
+        // Score = sum of distances to both endpoints (lower is better)
+        const score = fromResult.dist + toResult.dist;
+        
+        if (score < bestScore) {
+          bestScore = score;
+          bestTrack = track.coordinates;
+          bestFromIdx = fromResult.idx;
+          bestToIdx = toResult.idx;
+        }
+      }
+
+      if (!bestTrack) {
+        return [fromCoords, toCoords];
+      }
 
       // Extract the segment (handle both directions)
-      if (fromIdx <= toIdx) {
-        return coords.slice(fromIdx, toIdx + 1);
-      } else {
-        return coords.slice(toIdx, fromIdx + 1).reverse();
+      // Extend the segment to track endpoints when close to the ends
+      // This ensures CTrain lines visually connect to terminal stations
+      const trackLength = bestTrack.length;
+      const extensionThreshold = 20; // If within 20 points of track end, extend to the end
+      
+      let startIdx = bestFromIdx;
+      let endIdx = bestToIdx;
+      
+      // Swap if needed to ensure startIdx <= endIdx
+      if (startIdx > endIdx) {
+        [startIdx, endIdx] = [endIdx, startIdx];
       }
+      
+      // Extend to track start if we're near the beginning
+      if (startIdx < extensionThreshold) {
+        startIdx = 0;
+      }
+      
+      // Extend to track end if we're near the end
+      if (endIdx > trackLength - extensionThreshold - 1) {
+        endIdx = trackLength - 1;
+      }
+      
+      const segment = bestTrack.slice(startIdx, endIdx + 1);
+      
+      // Debug logging
+      console.log('Track segment extraction:', {
+        trackLength,
+        bestFromIdx,
+        bestToIdx,
+        startIdx,
+        endIdx,
+        segmentLength: segment.length,
+        segmentStart: segment[0],
+        segmentEnd: segment[segment.length - 1],
+        trackStart: bestTrack[0],
+        trackEnd: bestTrack[trackLength - 1],
+      });
+      
+      // Reverse if original direction was reverse
+      if (bestFromIdx > bestToIdx) {
+        return segment.reverse();
+      }
+      return segment;
     },
     [routeLines]
   );
@@ -1156,7 +1221,8 @@ const Map = ({
         duration: 1500,
       });
     }
-  }, [mapLoaded, tripPlan, getTrackSegment, routeLines]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapLoaded, tripPlan, getTrackSegment, routeLines, styleChangeCounter]);
 
   // Handle route calculation from TripPlanner
   const handleRouteCalculated = useCallback((plan: TripPlan) => {

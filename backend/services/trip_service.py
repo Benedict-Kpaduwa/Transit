@@ -210,14 +210,22 @@ async def transform_transit_api_response(
                 color = f"#{route_color}" if route_color else "#22c55e"
                 line = None
                 
-                # Detect CTrain by route name (Red or Blue)
-                if route_short_name.lower() in ["red", "blue"]:
+                # Detect CTrain by route number (201=Red, 202=Blue) or route name
+                route_name_lower = route_short_name.lower()
+                route_long_lower = route_long_name.lower() if route_long_name else ""
+                
+                if route_short_name in ["201", "Red"] or "red line" in route_long_lower:
                     vehicle_type = "CTrain"
-                    line = f"{route_short_name} Line"
-                    if route_short_name.lower() == "red":
-                        color = "#DC143C"
-                    else:
-                        color = "#0088FF"
+                    line = "Red Line"
+                    color = "#DC143C"
+                elif route_short_name in ["202", "Blue"] or "blue line" in route_long_lower:
+                    vehicle_type = "CTrain"
+                    line = "Blue Line"
+                    color = "#0088FF"
+                elif route_name_lower in ["red", "blue"]:
+                    vehicle_type = "CTrain"
+                    line = f"{route_short_name.capitalize()} Line"
+                    color = "#DC143C" if route_name_lower == "red" else "#0088FF"
                 
                 # Use polyline endpoints for transit coordinates
                 from_coords = leg_coords[0] if leg_coords else last_coords
