@@ -145,7 +145,8 @@ async def get_nearby_stops_with_arrivals(
     # Get arrivals for each stop
     nearby_stops = []
     stops_checked = 0
-    max_stops_to_check = limit_stops * 4  # Check more stops if filtering
+    # When filtering by vehicle type, check more stops since many might not match
+    max_stops_to_check = limit_stops * 20 if vehicle_type_filter else limit_stops * 4
 
     for stop in stops_with_distance:
         if len(nearby_stops) >= limit_stops or stops_checked >= max_stops_to_check:
@@ -229,12 +230,29 @@ async def get_station_arrivals(
     # Find matching stations
     matching_stops = []
     station_name_lower = station_name.lower()
-
+    
+    # Remove common suffixes for more flexible matching
+    search_terms = [station_name_lower]
+    for suffix in [" station", " ctrain station", " lrt station", " stn"]:
+        if station_name_lower.endswith(suffix):
+            cleaned = station_name_lower[:-len(suffix)]
+            search_terms.append(cleaned)
+            # Also split by slashes for compound names like "SAIT/ACAD/Jubilee"
+            parts = [p.strip() for p in cleaned.replace("/", " / ").split()]
+            for part in parts:
+                if len(part) >= 3 and part != "/":  # Only add meaningful parts
+                    search_terms.append(part)
+    
+    # Make search terms unique
+    search_terms = list(set(search_terms))
+    
     for stop in all_stops:
         stop_name = stop.get("stop_name", "").lower()
-        # Match LRT stations (usually have "Station" in name or specific naming)
-        if station_name_lower in stop_name:
-            matching_stops.append(stop)
+        # Match LRT stations
+        for search_term in search_terms:
+            if search_term in stop_name:
+                matching_stops.append(stop)
+                break  # Only add once per stop
 
     if not matching_stops:
         return {"error": f"Station '{station_name}' not found", "arrivals": []}

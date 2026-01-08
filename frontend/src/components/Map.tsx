@@ -28,8 +28,9 @@ import Train3DLayer, {
 } from "@/components/map/train-3d-layer";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 import { useTheme } from "@/stores/use-theme-store";
-import NearbyArrivals from "@/components/NearbyArrivals";
+import { useMapStore } from "@/stores/useMapStore";
 import { useSidebar } from "@/components/ui/sidebar";
+import { useStationArrivals, formatArrivalTime, getArrivalUrgencyColor } from "@/hooks/useArrivals";
 
 // Map themes to Mapbox styles
 const MAPBOX_STYLES = {
@@ -62,12 +63,25 @@ const Map = ({
   const [followingTrain, setFollowingTrain] = useState<"Red" | "Blue" | null>(
     null
   );
-  const [userLocation, setUserLocation] = useState<{
+  const [userLocation, setUserLocationLocal] = useState<{
     lng: number;
     lat: number;
   } | null>(null);
   const [isLocating, setIsLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
+
+  // Get setUserLocation from store to sync user location globally
+  const { setUserLocation: setUserLocationStore } = useMapStore();
+
+  // Sync local user location to store
+  const setUserLocation = useCallback(
+    (location: { lng: number; lat: number } | null) => {
+      setUserLocationLocal(location);
+      setUserLocationStore(location);
+    },
+    [setUserLocationStore]
+  );
+
 
   // Live trains visibility toggle (hidden by default)
   const [showLiveTrains, setShowLiveTrains] = useState(false);
@@ -104,6 +118,15 @@ const Map = ({
 
   // Fetch bus stops (cached for 1 hour)
   const { data: busStops } = useBusStops({ enabled: showBusStops });
+
+  // Fetch arrivals for selected station
+  const { data: stationArrivals, isLoading: isLoadingArrivals } = useStationArrivals(
+    selectedStation?.name ?? null,
+    {
+      enabled: !!selectedStation,
+      refetchInterval: 30000,
+    }
+  );
 
   // Fetch real-time C-Train positions (auto-refreshes every 10 seconds)
   const {
@@ -1163,7 +1186,7 @@ const Map = ({
   }, []);
 
   // Get user location
-  const getUserLocation = useCallback(() => {
+  const getUserLocation = useCallback((flyToLocation: boolean = true) => {
     if (!navigator.geolocation) {
       setLocationError("Geolocation is not supported by your browser");
       return;
@@ -1178,13 +1201,15 @@ const Map = ({
         setUserLocation({ lng: longitude, lat: latitude });
         setIsLocating(false);
 
-        // Fly to user location
-        mapRef.current?.flyTo({
-          center: [longitude, latitude],
-          zoom: 15,
-          pitch: 60,
-          duration: 2000,
-        });
+        // Fly to user location only if requested
+        if (flyToLocation && mapRef.current) {
+          mapRef.current.flyTo({
+            center: [longitude, latitude],
+            zoom: 15,
+            pitch: 60,
+            duration: 2000,
+          });
+        }
       },
       (error) => {
         setIsLocating(false);
@@ -1208,7 +1233,7 @@ const Map = ({
         maximumAge: 0,
       }
     );
-  }, []);
+  }, [setUserLocation]);
 
   // Fly to user location (if already obtained)
   const flyToUserLocation = useCallback(() => {
@@ -1223,6 +1248,14 @@ const Map = ({
       getUserLocation();
     }
   }, [userLocation, getUserLocation]);
+
+  // Auto-fetch user location on page load (silently, without flying)
+  useEffect(() => {
+    // Only fetch if we don't already have location
+    if (!userLocation && !isLocating) {
+      getUserLocation(false); // false = don't fly to location
+    }
+  }, []); // Run once on mount
 
   return (
     <MapContext.Provider value={{ map: mapInstance }}>
@@ -1261,21 +1294,7 @@ const Map = ({
           />
         )} */}
 
-        {/* Nearby Arrivals - left side panel */}
-        {mapLoaded && userLocation && (
-          <div className="absolute top-28 left-7 z-10 w-[320px]">
-            <NearbyArrivals
-              userLocation={userLocation}
-              onStopClick={(_stopId, coords) => {
-                mapRef.current?.flyTo({
-                  center: coords,
-                  zoom: 16,
-                  duration: 1500,
-                });
-              }}
-            />
-          </div>
-        )}
+        {/* Nearby Arrivals moved to Sidebar */}
 
         {/* Trip Planner - top right, beside search */}
         {mapLoaded && (
@@ -1547,12 +1566,57 @@ const Map = ({
                 </span>
               </div>
               {selectedStation.shared && (
-                <div className="bg-amber-500/15 border border-amber-500/25 rounded-lg px-3 py-2 mt-3">
+                <div className="bg-amber-500/15 border border-amber-500/25 rounded-lg px-3 py-2">
                   <p className="text-amber-400 font-medium text-xs">
                     ⭐ Downtown Transit Mall
                   </p>
                 </div>
               )}
+              
+              {/* Arrivals Section */}
+              <div className="mt-4 pt-3 border-t border-zinc-700/50">
+                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">
+                  Upcoming Arrivals
+                </h4>
+                {isLoadingArrivals ? (
+                  <div className="flex items-center gap-2 text-zinc-500">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span className="text-xs">Loading arrivals...</span>
+                  </div>
+                ) : stationArrivals?.arrivals && stationArrivals.arrivals.length > 0 ? (
+                  <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                    {stationArrivals.arrivals.slice(0, 6).map((arrival, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between bg-zinc-800/50 rounded-lg px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Train
+                            className="w-3.5 h-3.5 shrink-0"
+                            style={{ color: arrival.color }}
+                          />
+                          <span
+                            className="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0"
+                            style={{ backgroundColor: arrival.color, color: 'white' }}
+                          >
+                            {arrival.route_short_name}
+                          </span>
+                          <span className="text-xs text-zinc-300 truncate">
+                            {arrival.headsign}
+                          </span>
+                        </div>
+                        <span
+                          className={`text-sm font-bold shrink-0 ml-2 ${getArrivalUrgencyColor(arrival.minutes_away)}`}
+                        >
+                          {formatArrivalTime(arrival.minutes_away)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-500">No upcoming arrivals</p>
+                )}
+              </div>
             </div>
           </div>
         )}

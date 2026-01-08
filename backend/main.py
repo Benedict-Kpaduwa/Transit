@@ -141,7 +141,7 @@ async def arrivals_nearby(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/arrivals/station/{station_name}")
+@app.get("/arrivals/station/{station_name:path}")
 async def arrivals_for_station(
     station_name: str,
     line: Optional[str] = Query(None, description="Filter by line: Red or Blue"),

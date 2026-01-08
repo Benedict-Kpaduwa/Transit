@@ -3,13 +3,14 @@ import {
   Train,
   Bus,
   Search,
-  ChevronDown,
   Circle,
   Sparkles,
   Clock,
   MapPin,
   Info,
   Settings,
+  RefreshCw,
+  Navigation,
 } from "lucide-react";
 import {
   Sidebar,
@@ -26,159 +27,149 @@ import {
 import { useAllStationsByLineSorted } from "@/hooks/queries";
 import { useMapStore } from "@/stores/useMapStore";
 import { cn } from "@/lib/utils";
-import type { Station } from "@/types";
 import { useTheme } from "@/stores/use-theme-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  useNearbyArrivals,
+  formatArrivalTime,
+  getArrivalUrgencyColor,
+} from "@/hooks/useArrivals";
 
-// Compact station item component
-function StationItem({
-  station,
-  isSelected,
-  onClick,
+// Nearby Departures component for a specific vehicle type
+function NearbyDepartures({
+  userLocation,
+  vehicleType,
 }: {
-  station: Station;
-  isSelected: boolean;
-  onClick: () => void;
+  userLocation: { lat: number; lng: number } | null;
+  vehicleType: "CTrain" | "Bus";
 }) {
-  const isRedLine = station.line === "Red" || station.route === "201";
+  // CTrain stations are farther apart, so use larger radius
+  const searchRadius = vehicleType === "CTrain" ? 2000 : 800;
+  
+  const {
+    data: nearbyData,
+    isLoading,
+    isError,
+    refetch,
+  } = useNearbyArrivals(userLocation, {
+    radius: searchRadius,
+    limitStops: 4,
+    limitArrivals: 3,
+    vehicleType,
+    enabled: !!userLocation,
+    refetchInterval: 30000,
+  });
+
+  if (!userLocation) {
+    return (
+      <div className="px-3 py-3 text-muted-foreground text-xs flex items-center gap-2">
+        <Navigation className="size-3" />
+        <span>Enable location for nearby departures</span>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="px-3 py-4 flex items-center justify-center">
+        <RefreshCw className="size-4 text-muted-foreground animate-spin" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="px-3 py-3 text-red-400 text-xs">
+        Failed to load departures
+      </div>
+    );
+  }
+
+  if (!nearbyData || nearbyData.stops.length === 0) {
+    return (
+      <div className="px-3 py-3 text-muted-foreground text-xs text-center">
+        No nearby {vehicleType === "CTrain" ? "CTrain" : "bus"} stops
+      </div>
+    );
+  }
 
   return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all duration-200 group",
-        isSelected ? "bg-white/10 shadow-lg" : "hover:bg-white/5"
-      )}
-    >
-      {/* Station dot with pulse animation when selected */}
-      <div className="relative shrink-0">
+    <div className="divide-y divide-sidebar-border">
+      {nearbyData.stops.map((stopData) => (
         <div
-          className={cn(
-            "size-2.5 rounded-full transition-all",
-            isRedLine ? "bg-red-500" : "bg-blue-500",
-            isSelected && "scale-125"
-          )}
-        />
-        {isSelected && (
-          <div
-            className={cn(
-              "absolute inset-0 rounded-full animate-ping opacity-75",
-              isRedLine ? "bg-red-500" : "bg-blue-500"
-            )}
-          />
-        )}
-      </div>
-
-      {/* Station info */}
-      <div className="flex-1 min-w-0">
-        <p
-          className={cn(
-            "text-sm font-medium truncate transition-colors",
-            isSelected
-              ? "text-foreground"
-              : "text-muted-foreground group-hover:text-foreground"
-          )}
+          key={stopData.stop.stop_id}
+          className="px-3 py-2 hover:bg-white/5 transition-colors"
         >
-          {station.name}
-        </p>
-        {station.shared && (
-          <span className="text-xs text-amber-400/80 font-medium">
-            Free Fare Zone
-          </span>
-        )}
-      </div>
-
-      {/* Live indicator */}
-      <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-        <Clock className="size-3 text-muted-foreground" />
-        <span className="text-xs text-muted-foreground">3m</span>
-      </div>
-    </button>
-  );
-}
-
-// Line section component
-function LineSection({
-  title,
-  color,
-  stations,
-  selectedStation,
-  onStationClick,
-  defaultOpen = false,
-}: {
-  title: string;
-  color: "red" | "blue";
-  stations: Station[];
-  selectedStation: Station | null;
-  onStationClick: (station: Station) => void;
-  defaultOpen?: boolean;
-}) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  const colorClasses = {
-    red: {
-      bg: "bg-red-500/10",
-      border: "border-red-500/30",
-      text: "text-red-400",
-      dot: "bg-red-500",
-      glow: "shadow-red-500/20",
-    },
-    blue: {
-      bg: "bg-blue-500/10",
-      border: "border-blue-500/30",
-      text: "text-blue-400",
-      dot: "bg-blue-500",
-      glow: "shadow-blue-500/20",
-    },
-  };
-  const colors = colorClasses[color];
-
-  return (
-    <div className="space-y-1">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={cn(
-          "w-full flex items-center justify-between px-3 py-3 rounded-xl transition-all duration-200",
-          isOpen ? `${colors.bg} ${colors.border} border` : "hover:bg-white/5"
-        )}
-      >
-        <div className="flex items-center gap-3">
-          <div
-            className={cn(
-              "size-3 rounded-full shadow-lg",
-              colors.dot,
-              colors.glow
-            )}
-          />
-          <div className="text-left">
-            <h3 className={cn("font-semibold text-sm", colors.text)}>
-              {title}
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              {stations.length} stations
-            </p>
+          <div className="flex items-start gap-2 mb-1.5">
+            <MapPin className="size-3 text-muted-foreground mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium truncate">
+                {stopData.stop.stop_name}
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                {stopData.stop.distance_meters}m away
+              </p>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                refetch();
+              }}
+              className="p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <RefreshCw className="size-2.5" />
+            </button>
           </div>
-        </div>
-        <ChevronDown
-          className={cn(
-            "size-4 text-muted-foreground transition-transform duration-200",
-            isOpen && "rotate-180"
-          )}
-        />
-      </button>
 
-      {isOpen && (
-        <div className="ml-1.5 pl-4 border-l border-sidebar-border space-y-0.5 animate-in fade-in slide-in-from-top-2 duration-200">
-          {stations.map((station, idx) => (
-            <StationItem
-              key={`${color}-${idx}`}
-              station={station}
-              isSelected={selectedStation?.name === station.name}
-              onClick={() => onStationClick(station)}
-            />
-          ))}
+          {stopData.arrivals.length > 0 ? (
+            <div className="space-y-1 ml-5">
+              {stopData.arrivals.map((arrival, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between bg-sidebar rounded-md px-2 py-1 border border-sidebar-border"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {vehicleType === "CTrain" ? (
+                      <Train
+                        className="size-3 shrink-0"
+                        style={{ color: arrival.color }}
+                      />
+                    ) : (
+                      <Bus
+                        className="size-3 shrink-0"
+                        style={{ color: arrival.color }}
+                      />
+                    )}
+                    <span
+                      className="text-[9px] font-bold px-1 py-0.5 rounded shrink-0"
+                      style={{
+                        backgroundColor: arrival.color,
+                        color: "white",
+                      }}
+                    >
+                      {arrival.route_short_name}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground truncate">
+                      {arrival.headsign}
+                    </span>
+                  </div>
+                  <span
+                    className={cn(
+                      "text-[10px] font-bold shrink-0 ml-1",
+                      getArrivalUrgencyColor(arrival.minutes_away)
+                    )}
+                  >
+                    {formatArrivalTime(arrival.minutes_away)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[10px] text-muted-foreground ml-5">No scheduled arrivals</p>
+          )}
         </div>
-      )}
+      ))}
     </div>
   );
 }
@@ -229,7 +220,7 @@ const AppSidebar = () => {
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
   const { data: stations } = useAllStationsByLineSorted();
-  const { selectedStation, setSelectedStation } = useMapStore();
+  const { setSelectedStation, userLocation } = useMapStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSection, setActiveSection] = useState<"red" | "blue" | null>(
     "red"
@@ -369,15 +360,62 @@ const AppSidebar = () => {
       </SidebarHeader>
 
       <SidebarContent className="px-4 py-4">
-        {/* Search */}
+        {/* Search with Results */}
         <div className="relative mb-5">
-          {/* <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-zinc-500" /> */}
           <Input
             type="text"
-            placeholder="Search stations..."
+            placeholder="Search CTrain stations..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
+          
+          {/* Search Results Dropdown */}
+          {searchQuery && (filteredRed.length > 0 || filteredBlue.length > 0) && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-sidebar border border-sidebar-border rounded-xl shadow-xl z-50 max-h-[300px] overflow-y-auto">
+              {filteredRed.length > 0 && (
+                <div className="p-2">
+                  <div className="flex items-center gap-2 px-2 py-1 mb-1">
+                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase">Red Line</span>
+                  </div>
+                  {filteredRed.slice(0, 5).map((station, idx) => (
+                    <button
+                      key={`red-${idx}`}
+                      onClick={() => {
+                        setSelectedStation(station);
+                        setSearchQuery("");
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left hover:bg-white/10 transition-colors"
+                    >
+                      <Train className="size-3.5 text-red-500" />
+                      <span className="text-sm text-foreground">{station.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {filteredBlue.length > 0 && (
+                <div className="p-2 border-t border-sidebar-border">
+                  <div className="flex items-center gap-2 px-2 py-1 mb-1">
+                    <div className="w-2 h-2 rounded-full bg-blue-500" />
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase">Blue Line</span>
+                  </div>
+                  {filteredBlue.slice(0, 5).map((station, idx) => (
+                    <button
+                      key={`blue-${idx}`}
+                      onClick={() => {
+                        setSelectedStation(station);
+                        setSearchQuery("");
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left hover:bg-white/10 transition-colors"
+                    >
+                      <Train className="size-3.5 text-blue-500" />
+                      <span className="text-sm text-foreground">{station.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Quick Stats */}
@@ -413,27 +451,18 @@ const AppSidebar = () => {
           </h2>
         </div>
 
-        {/* Lines */}
-        <div className="space-y-2">
-          <LineSection
-            title="Red Line"
-            color="red"
-            stations={filteredRed}
-            selectedStation={selectedStation}
-            onStationClick={setSelectedStation}
-            defaultOpen={true}
-          />
-          <LineSection
-            title="Blue Line"
-            color="blue"
-            stations={filteredBlue}
-            selectedStation={selectedStation}
-            onStationClick={setSelectedStation}
-            defaultOpen={false}
-          />
+        {/* Nearby CTrain Departures */}
+        <div className="mb-4 bg-sidebar rounded-xl border border-sidebar-border overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-sidebar-border bg-sidebar-accent/30">
+            <Clock className="size-3.5 text-blue-400" />
+            <span className="text-xs font-medium text-muted-foreground">
+              Nearby CTrain Departures
+            </span>
+          </div>
+          <NearbyDepartures userLocation={userLocation} vehicleType="CTrain" />
         </div>
 
-        {/* Buses Section (Placeholder) */}
+        {/* Buses Section */}
         <div className="mt-6">
           <div className="flex items-center gap-2 mb-3 px-1">
             <Bus className="size-4 text-muted-foreground" />
@@ -441,11 +470,14 @@ const AppSidebar = () => {
               Bus Routes
             </h2>
           </div>
-          <div className="bg-sidebar rounded-xl p-4 border border-dashed border-sidebar-border text-center">
-            <Bus className="size-8 text-muted-foreground mx-auto mb-2" />
-            <p className="text-xs text-muted-foreground">
-              Bus tracking coming soon
-            </p>
+          <div className="bg-sidebar rounded-xl border border-sidebar-border overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-sidebar-border bg-sidebar-accent/30">
+              <Clock className="size-3.5 text-green-400" />
+              <span className="text-xs font-medium text-muted-foreground">
+                Nearby Bus Departures
+              </span>
+            </div>
+            <NearbyDepartures userLocation={userLocation} vehicleType="Bus" />
           </div>
         </div>
       </SidebarContent>
