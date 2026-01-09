@@ -63,27 +63,37 @@ export interface Train {
   nextStation: string;
 }
 
-// Real-time C-Train position from API
+// Real-time C-Train position from API (may be GPS or interpolated)
 export interface CTrainPosition {
   vehicle_id: string;
   route_id: string;
-  line: "RED" | "BLUE";
+  route_short_name?: string;
+  vehicle_type: "CTrain";
+  line: "RED" | "BLUE" | "Red" | "Blue";
+  color?: string;
   trip_id: string;
+  headsign?: string;
   position: {
     latitude: number;
     longitude: number;
-    bearing?: number;
-    speed?: number;
+    bearing?: number | null;
+    speed?: number | null;
   };
+  prev_stop?: string;
+  next_stop?: string;
+  progress?: number;
+  interpolated?: boolean;
   nearest_station?: string;
   distance_to_station?: number;
-  timestamp: string;
+  timestamp: number | string;
 }
 
 export interface CTrainResponse {
-  total: number;
-  line: string;
-  ctrains: CTrainPosition[];
+  count: number;
+  line_filter: string | null;
+  data_source: "gps" | "interpolated" | null;
+  vehicles: CTrainPosition[];
+  timestamp: string;
 }
 
 export interface CTrainGeoJSONFeature {

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { stationApi, ctrainApi, busStopApi } from "@/services/api";
+import { stationApi, ctrainApi, busStopApi, vehiclesApi, type Vehicle } from "@/services/api";
 
 export const useAllStations = () => {
   const { data, isLoading, error, refetch, isError } = useQuery({
@@ -138,3 +138,30 @@ export const useBusStops = (options?: { enabled?: boolean }) => {
 
   return { data, isLoading, error, refetch, isError };
 };
+
+// ==================== Bus Real-Time Position Hooks ====================
+
+/**
+ * Fetch real-time bus positions
+ * Auto-refreshes every 10 seconds
+ */
+export const useBusPositions = (
+  route?: string,
+  options?: { refetchInterval?: number; enabled?: boolean }
+) => {
+  const { refetchInterval = 10000, enabled = true } = options || {};
+
+  const { data, isLoading, error, refetch, isError, isFetching } = useQuery({
+    queryKey: ["bus-positions", route],
+    queryFn: () => vehiclesApi.getBuses(route),
+    refetchInterval,
+    enabled,
+    staleTime: 5000,
+  });
+
+  return { data, isLoading, error, refetch, isError, isFetching };
+};
+
+// Re-export Vehicle type for use in components
+export type { Vehicle };
+
