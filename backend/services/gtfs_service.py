@@ -675,6 +675,80 @@ def is_loaded() -> bool:
     return _gtfs_cache["loaded"]
 
 
+def get_route_shape(route_id: str, direction_id: Optional[int] = None) -> Optional[Dict]:
+    """
+    Get the shape (geometry) for a route.
+    Returns GeoJSON LineString with coordinates.
+    """
+    if not _gtfs_cache["loaded"]:
+        return None
+    
+    # Try to find route by ID or short name
+    route = _gtfs_cache["route_by_id"].get(str(route_id))
+    if not route:
+        route = _gtfs_cache["route_by_short_name"].get(str(route_id))
+    if not route:
+        return None
+    
+    actual_route_id = route.get("route_id")
+    
+    # Get trips for this route
+    trips = _gtfs_cache["trips_by_route"].get(actual_route_id, [])
+    if not trips:
+        return None
+    
+    # Filter by direction if specified
+    shape_ids = set()
+    for trip_id in trips:
+        trip = _gtfs_cache["trip_by_id"].get(trip_id, {})
+        if direction_id is not None and trip.get("direction_id") != direction_id:
+            continue
+        shape_id = trip.get("shape_id")
+        if shape_id:
+            shape_ids.add(shape_id)
+    
+    if not shape_ids:
+        return None
+    
+    # Get shape points for the first shape_id (they should be similar for same route)
+    shapes_df = _gtfs_cache.get("shapes")
+    if shapes_df is None:
+        return None
+    
+    # Get the first shape
+    shape_id = list(shape_ids)[0]
+    shape_points = shapes_df[shapes_df["shape_id"] == shape_id].sort_values("shape_pt_sequence")
+    
+    if shape_points.empty:
+        # Try matching as string
+        shape_points = shapes_df[shapes_df["shape_id"].astype(str) == str(shape_id)].sort_values("shape_pt_sequence")
+    
+    if shape_points.empty:
+        return None
+    
+    # Build GeoJSON LineString
+    coordinates = []
+    for _, row in shape_points.iterrows():
+        coordinates.append([float(row["shape_pt_lon"]), float(row["shape_pt_lat"])])
+    
+    return {
+        "type": "Feature",
+        "geometry": {
+            "type": "LineString",
+            "coordinates": coordinates
+        },
+        "properties": {
+            "route_id": actual_route_id,
+            "route_short_name": route.get("route_short_name"),
+            "route_long_name": route.get("route_long_name"),
+            "color": route.get("color"),
+            "vehicle_type": route.get("vehicle_type"),
+            "shape_id": shape_id,
+            "points_count": len(coordinates)
+        }
+    }
+
+
 def get_cache_stats() -> Dict:
     """Get cache statistics"""
     return {

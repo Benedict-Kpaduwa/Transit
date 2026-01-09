@@ -35,6 +35,7 @@ from services.gtfs_service import (
     get_cache_stats,
     get_realtime_arrivals,
     get_route,
+    get_route_shape,
     get_routes_serving_stop,
     get_stop,
     get_vehicle_positions,
@@ -46,6 +47,7 @@ from services.trip_service import (
     geocode_location,
     plan_trip,
 )
+from services.ctrain_interpolation import get_interpolated_ctrain_positions
 
 app = FastAPI(
     title="Calgary Transit API",
@@ -209,14 +211,41 @@ async def arrivals_for_stop(
 @app.get("/vehicles/ctrains")
 async def get_ctrains(
     line: Optional[str] = Query(None, description="Filter by line: Red or Blue"),
+    source: Optional[str] = Query(None, description="Data source: gps, interpolated, or auto (default)"),
 ):
-    """Get real-time CTrain positions"""
+    """
+    Get real-time CTrain positions.
+    
+    Note: Calgary Transit doesn't publish CTrain GPS positions in their GTFS-RT feed.
+    By default, we use interpolated positions calculated from trip updates and track geometry.
+    
+    Source options:
+    - auto (default): Use GPS if available, fallback to interpolated
+    - gps: Only use GPS positions (may return empty)
+    - interpolated: Only use interpolated positions
+    """
     try:
-        vehicles = await get_vehicle_positions(vehicle_type="CTrain", line=line)
-
+        use_gps = source in [None, "auto", "gps"]
+        use_interpolated = source in [None, "auto", "interpolated"]
+        
+        vehicles = []
+        data_source = None
+        
+        # Try GPS positions first
+        if use_gps:
+            vehicles = await get_vehicle_positions(vehicle_type="CTrain", line=line)
+            if vehicles:
+                data_source = "gps"
+        
+        # Fallback to interpolated positions
+        if not vehicles and use_interpolated:
+            vehicles = await get_interpolated_ctrain_positions(line=line)
+            data_source = "interpolated"
+        
         return {
             "count": len(vehicles),
             "line_filter": line,
+            "data_source": data_source,
             "vehicles": vehicles,
             "timestamp": datetime.now().isoformat(),
         }
@@ -456,6 +485,21 @@ async def route_detail(route_id: str):
         "route": route,
         **schedule,
     }
+
+
+@app.get("/routes/{route_id}/shape")
+async def route_shape(
+    route_id: str,
+    direction: Optional[int] = Query(None, description="Direction ID (0 or 1)"),
+):
+    """
+    Get the shape/geometry for a specific route as GeoJSON.
+    Useful for drawing route lines on a map.
+    """
+    shape = get_route_shape(route_id, direction)
+    if not shape:
+        raise HTTPException(status_code=404, detail=f"Shape for route {route_id} not found")
+    return shape
 
 
 # ============================================
