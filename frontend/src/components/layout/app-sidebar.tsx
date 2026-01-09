@@ -40,9 +40,11 @@ import {
 function NearbyDepartures({
   userLocation,
   vehicleType,
+  onArrivalClick,
 }: {
   userLocation: { lat: number; lng: number } | null;
   vehicleType: "CTrain" | "Bus";
+  onArrivalClick?: (arrival: { trip_id: string; vehicle_id: string | null; line: string | null; route_id?: string; route_short_name: string; headsign: string; color?: string }) => void;
 }) {
   // CTrain stations are farther apart, so use larger radius
   const searchRadius = vehicleType === "CTrain" ? 2000 : 800;
@@ -127,7 +129,23 @@ function NearbyDepartures({
               {stopData.arrivals.map((arrival, idx) => (
                 <div
                   key={idx}
-                  className="flex items-center justify-between bg-sidebar rounded-md px-2 py-1 border border-sidebar-border"
+                  onClick={() => {
+                    if (onArrivalClick) {
+                      onArrivalClick({
+                        trip_id: arrival.trip_id,
+                        vehicle_id: arrival.vehicle_id,
+                        line: arrival.line,
+                        route_id: arrival.route_id,
+                        route_short_name: arrival.route_short_name,
+                        headsign: arrival.headsign,
+                        color: arrival.color,
+                      });
+                    }
+                  }}
+                  className={cn(
+                    "flex items-center justify-between bg-sidebar rounded-md px-2 py-1 border border-sidebar-border",
+                    onArrivalClick && "cursor-pointer hover:bg-white/10 transition-colors"
+                  )}
                 >
                   <div className="flex items-center gap-1.5 min-w-0">
                     {vehicleType === "CTrain" ? (
@@ -220,7 +238,7 @@ const AppSidebar = () => {
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
   const { data: stations } = useAllStationsByLineSorted();
-  const { setSelectedStation, userLocation } = useMapStore();
+  const { setSelectedStation, userLocation, setTrackedVehicle, setShowLiveBuses, setShowLiveTrains } = useMapStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSection, setActiveSection] = useState<"red" | "blue" | null>(
     "red"
@@ -459,7 +477,25 @@ const AppSidebar = () => {
               Nearby CTrain Departures
             </span>
           </div>
-          <NearbyDepartures userLocation={userLocation} vehicleType="CTrain" />
+          <NearbyDepartures 
+            userLocation={userLocation} 
+            vehicleType="CTrain"
+            onArrivalClick={(arrival) => {
+              // Turn off all live vehicle toggles - only show the tracked vehicle
+              setShowLiveBuses(false);
+              setShowLiveTrains(false);
+              setTrackedVehicle({
+                tripId: arrival.trip_id,
+                vehicleId: arrival.vehicle_id,
+                vehicleType: "CTrain",
+                line: arrival.line as "Red" | "Blue" | undefined,
+                routeId: arrival.route_id,
+                routeShortName: arrival.route_short_name,
+                headsign: arrival.headsign,
+                color: arrival.color,
+              });
+            }}
+          />
         </div>
 
         {/* Buses Section */}
@@ -477,7 +513,24 @@ const AppSidebar = () => {
                 Nearby Bus Departures
               </span>
             </div>
-            <NearbyDepartures userLocation={userLocation} vehicleType="Bus" />
+            <NearbyDepartures 
+              userLocation={userLocation} 
+              vehicleType="Bus"
+              onArrivalClick={(arrival) => {
+                // Turn off all live vehicle toggles - only show the tracked vehicle
+                setShowLiveBuses(false);
+                setShowLiveTrains(false);
+                setTrackedVehicle({
+                  tripId: arrival.trip_id,
+                  vehicleId: arrival.vehicle_id,
+                  vehicleType: "Bus",
+                  routeId: arrival.route_id,
+                  routeShortName: arrival.route_short_name,
+                  headsign: arrival.headsign,
+                  color: arrival.color || "#22c55e",
+                });
+              }}
+            />
           </div>
         </div>
       </SidebarContent>

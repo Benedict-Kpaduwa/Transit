@@ -2,9 +2,7 @@ import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Station, RouteLine, CTrainPosition } from "@/types";
-import { useTrainSimulation } from "@/hooks/useTrainSimulation";
-import { useCTrainPositionsByLine, useBusStops } from "@/hooks/queries";
-import TrainControls from "./TrainControls";
+import { useCTrainPositionsByLine, useBusStops, useBusPositions } from "@/hooks/queries";
 import TripPlanner from "./TripPlanner";
 import { type TripPlan } from "@/services/api";
 import {
@@ -17,15 +15,14 @@ import {
   WifiOff,
   Bus,
   Train,
-  Play,
 } from "lucide-react";
 import { MapContext } from "@/context/map-context";
 import MapSearch from "@/components/map/map-search";
 import MapStyles from "@/components/map/map-styles";
 import MapControls from "@/components/map/map-controls";
-import Train3DLayer, {
-  type TrainPositionData,
-} from "@/components/map/train-3d-layer";
+import VehicleLayer, {
+  type VehiclePositionData,
+} from "@/components/map/vehicle-layer";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 import { useTheme } from "@/stores/use-theme-store";
 import { useMapStore } from "@/stores/useMapStore";
@@ -57,12 +54,8 @@ const Map = ({
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const userLocationMarkerRef = useRef<mapboxgl.Marker | null>(null);
-  const use3DTrains = true; // Enable 3D train models
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapInstance, setMapInstance] = useState<mapboxgl.Map | null>(null);
-  const [followingTrain, setFollowingTrain] = useState<"Red" | "Blue" | null>(
-    null
-  );
   const [userLocation, setUserLocationLocal] = useState<{
     lng: number;
     lat: number;
@@ -70,8 +63,8 @@ const Map = ({
   const [isLocating, setIsLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
-  // Get setUserLocation from store to sync user location globally
-  const { setUserLocation: setUserLocationStore } = useMapStore();
+  // Get store values
+  const { setUserLocation: setUserLocationStore, trackedVehicle, setTrackedVehicle } = useMapStore();
 
   // Sync local user location to store
   const setUserLocation = useCallback(
@@ -83,11 +76,8 @@ const Map = ({
   );
 
 
-  // Live trains visibility toggle (hidden by default)
-  const [showLiveTrains, setShowLiveTrains] = useState(false);
-
-  // Simulation visibility toggle (hidden by default)
-  const [showSimulation, setShowSimulation] = useState(false);
+  // Live trains visibility toggle - from store so sidebar can control it
+  const { showLiveTrains, setShowLiveTrains, showLiveBuses, setShowLiveBuses } = useMapStore();
 
   // Bus stops visibility toggle
   const [showBusStops, setShowBusStops] = useState(false);
@@ -110,6 +100,13 @@ const Map = ({
     coordinates: [number, number];
   } | null>(null);
 
+  // Viewed route shape (when clicking "View Route" on a bus)
+  const [viewedRouteShape, setViewedRouteShape] = useState<{
+    routeId: string;
+    coordinates: [number, number][];
+    color: string;
+  } | null>(null);
+
   // Theme for map style
   const { resolvedTheme } = useTheme();
 
@@ -130,7 +127,11 @@ const Map = ({
     }
   );
 
+  // Check if tracking a train
+  const isTrackingTrain = trackedVehicle?.vehicleType === "CTrain";
+  
   // Fetch real-time C-Train positions (auto-refreshes every 10 seconds)
+  // Also fetch when tracking a specific train
   const {
     data: realTimeTrains,
     isLoading: isLoadingTrains,
@@ -138,11 +139,11 @@ const Map = ({
     isFetching: isFetchingTrains,
   } = useCTrainPositionsByLine({
     refetchInterval: 10000, // Refresh every 10 seconds
-    enabled: showLiveTrains && mapLoaded, // Only fetch when live trains toggle is on
+    enabled: (showLiveTrains || isTrackingTrain) && mapLoaded, // Fetch when toggle is on OR when tracking a train
   });
 
-  // Transform API data to the format expected by Train3DLayer
-  const transformedRedTrains = useMemo((): TrainPositionData[] => {
+  // Transform API data to the format expected by VehicleLayer
+  const transformedRedTrains = useMemo((): VehiclePositionData[] => {
     if (!realTimeTrains?.red) return [];
     return realTimeTrains.red
       .filter(
@@ -159,12 +160,16 @@ const Map = ({
         lng: train.position.longitude,
         lat: train.position.latitude,
         bearing: train.position.bearing || 0,
-        nearestStation: train.nearest_station,
+        vehicleType: "CTrain" as const,
+        routeShortName: train.route_short_name || "201",
+        headsign: train.headsign,
+        color: "#DC2626", // Red line color
         vehicleId: train.vehicle_id,
+        tripId: train.trip_id,
       }));
   }, [realTimeTrains?.red]);
 
-  const transformedBlueTrains = useMemo((): TrainPositionData[] => {
+  const transformedBlueTrains = useMemo((): VehiclePositionData[] => {
     if (!realTimeTrains?.blue) return [];
     return realTimeTrains.blue
       .filter(
@@ -181,38 +186,111 @@ const Map = ({
         lng: train.position.longitude,
         lat: train.position.latitude,
         bearing: train.position.bearing || 0,
-        nearestStation: train.nearest_station,
+        vehicleType: "CTrain" as const,
+        routeShortName: train.route_short_name || "202",
+        headsign: train.headsign,
+        color: "#2563EB", // Blue line color
         vehicleId: train.vehicle_id,
+        tripId: train.trip_id,
       }));
   }, [realTimeTrains?.blue]);
 
+  // Fetch bus positions when tracking a bus
+  const isTrackingBus = trackedVehicle?.vehicleType === "Bus";
+  
+  // Fetch ALL buses when showLiveBuses is enabled OR when tracking a specific bus
+  // This ensures we always have the tracked bus data available
+  const { data: allBusPositionsData, isFetching: isFetchingBuses } = useBusPositions(undefined, {
+    refetchInterval: 10000,
+    enabled: (showLiveBuses || isTrackingBus) && mapLoaded,
+  });
+
+  // Transform ALL bus positions for the map
+  const transformedBuses = useMemo((): VehiclePositionData[] => {
+    if (!allBusPositionsData?.vehicles) return [];
+    
+    return allBusPositionsData.vehicles
+      .filter(bus => 
+        bus.position &&
+        typeof bus.position.longitude === "number" &&
+        typeof bus.position.latitude === "number" &&
+        !isNaN(bus.position.longitude) &&
+        !isNaN(bus.position.latitude)
+      )
+      .map(bus => ({
+        id: bus.vehicle_id || bus.trip_id,
+        lng: bus.position.longitude,
+        lat: bus.position.latitude,
+        bearing: bus.position.bearing || 0,
+        vehicleType: "Bus" as const,
+        routeShortName: bus.route_short_name,
+        headsign: bus.headsign,
+        color: "#22c55e", // Default green for buses
+        vehicleId: bus.vehicle_id,
+        tripId: bus.trip_id,
+        timestamp: bus.timestamp,
+      }));
+  }, [allBusPositionsData]);
+
+  // Get tracked bus position from all buses
+  const trackedBusPosition = useMemo((): VehiclePositionData | null => {
+    if (!isTrackingBus || !trackedVehicle) return null;
+    
+    // Find the specific bus we're tracking from all buses
+    const bus = transformedBuses.find(v => v.tripId === trackedVehicle.tripId)
+      || transformedBuses.find(v => v.vehicleId === trackedVehicle.vehicleId);
+    
+    if (bus) {
+      return { ...bus, color: trackedVehicle.color || bus.color };
+    }
+    
+    return null;
+  }, [isTrackingBus, transformedBuses, trackedVehicle]);
+
+  // Get tracked train position from all trains
+  const trackedTrainPosition = useMemo((): VehiclePositionData | null => {
+    if (!isTrackingTrain || !trackedVehicle) return null;
+    
+    // Combine all trains to search through
+    const allTrains = [...transformedRedTrains, ...transformedBlueTrains];
+    
+    // Find the specific train we're tracking
+    const train = allTrains.find(v => v.tripId === trackedVehicle.tripId)
+      || allTrains.find(v => v.vehicleId === trackedVehicle.vehicleId);
+    
+    if (train) {
+      return { ...train, color: trackedVehicle.color || train.color };
+    }
+    
+    return null;
+  }, [isTrackingTrain, transformedRedTrains, transformedBlueTrains, trackedVehicle]);
+
+  // Combine all vehicles for VehicleLayer (CTrains + Buses)
+  const allVehicles = useMemo((): VehiclePositionData[] => {
+    const vehicles: VehiclePositionData[] = [];
+    
+    // If tracking a specific train, ONLY show that train - ignore showLiveTrains toggle
+    if (isTrackingTrain && trackedTrainPosition) {
+      vehicles.push(trackedTrainPosition);
+    } else if (showLiveTrains && !isTrackingBus) {
+      // Only show all trains if NOT tracking a specific vehicle
+      vehicles.push(...transformedRedTrains, ...transformedBlueTrains);
+    }
+    
+    // If tracking a specific bus, ONLY show that bus - ignore showLiveBuses toggle
+    if (isTrackingBus && trackedBusPosition) {
+      vehicles.push(trackedBusPosition);
+    } else if (showLiveBuses && !isTrackingTrain) {
+      // Only show all buses if NOT tracking a specific vehicle
+      vehicles.push(...transformedBuses);
+    }
+    
+    return vehicles;
+  }, [transformedRedTrains, transformedBlueTrains, transformedBuses, trackedBusPosition, trackedTrainPosition, showLiveTrains, showLiveBuses, isTrackingBus, isTrackingTrain]);
+
   // Check if real-time data is available
   const hasRealTimeData =
-    transformedRedTrains.length > 0 || transformedBlueTrains.length > 0;
-
-  const redStations = useMemo(
-    () => stations.filter((s) => s.line === "Red"),
-    [stations]
-  );
-
-  const blueStations = useMemo(
-    () => stations.filter((s) => s.line === "Blue"),
-    [stations]
-  );
-
-  const redTrain = useTrainSimulation({
-    routeLines,
-    stations: redStations,
-    lineColor: "Red",
-    speed: 0.0008,
-  });
-
-  const blueTrain = useTrainSimulation({
-    routeLines,
-    stations: blueStations,
-    lineColor: "Blue",
-    speed: 0.0006,
-  });
+    transformedRedTrains.length > 0 || transformedBlueTrains.length > 0 || transformedBuses.length > 0 || !!trackedBusPosition || !!trackedTrainPosition;
 
   useEffect(() => {
     if (!mapboxToken || !mapContainerRef.current) return;
@@ -751,31 +829,48 @@ const Map = ({
     }
   }, [selectedStation]);
 
+  // Handle tracked vehicle - fly to and follow the vehicle
   useEffect(() => {
-    if (!followingTrain || !mapRef.current) return;
-
-    const target =
-      followingTrain === "Red"
-        ? redTrain.trainPosition
-        : blueTrain.trainPosition;
-
-    if (target) {
-      // mapRef.current.easeTo({
-      //   center: [target.lng, target.lat],
-      //   duration: 100,
-      //   easing: (t) => t,
-      //   pitch: 60,
-      //   zoom: 15.5,
-      // });
-
-      mapRef.current.jumpTo({
-        center: [target.lng, target.lat],
-        bearing: target.bearing,
+    if (!trackedVehicle || !mapRef.current) return;
+    
+    // Enable live trains view automatically for CTrains
+    if (trackedVehicle.vehicleType === "CTrain" && !showLiveTrains) {
+      setShowLiveTrains(true);
+    }
+    
+    // Find the vehicle by tripId or vehicleId in all vehicles
+    const vehicle = allVehicles.find(v => v.tripId === trackedVehicle.tripId) 
+      || allVehicles.find(v => v.vehicleId === trackedVehicle.vehicleId);
+    
+    if (vehicle) {
+      // Fly to the vehicle's position
+      mapRef.current.flyTo({
+        center: [vehicle.lng, vehicle.lat],
+        zoom: 16,
         pitch: 60,
-        zoom: 15.5,
+        bearing: vehicle.bearing,
+        duration: 1500,
       });
     }
-  }, [redTrain.trainPosition, blueTrain.trainPosition, followingTrain]);
+  }, [trackedVehicle, allVehicles, showLiveTrains]);
+
+  // Continuously follow tracked vehicle
+  useEffect(() => {
+    if (!trackedVehicle || !mapRef.current) return;
+    
+    // Find the vehicle in all vehicles
+    const vehicle = allVehicles.find(v => v.tripId === trackedVehicle.tripId) 
+      || allVehicles.find(v => v.vehicleId === trackedVehicle.vehicleId);
+    
+    if (vehicle) {
+      mapRef.current.jumpTo({
+        center: [vehicle.lng, vehicle.lat],
+        bearing: vehicle.bearing,
+        pitch: 60,
+        zoom: 16,
+      });
+    }
+  }, [trackedVehicle, allVehicles]);
 
   // Create user location marker element
   const createUserLocationEl = useCallback(() => {
@@ -1335,6 +1430,97 @@ const Map = ({
     }
   }, [userLocation, getUserLocation]);
 
+  // Handle View Route click from vehicle popup
+  const handleViewRoute = useCallback(async (vehicle: VehiclePositionData) => {
+    if (!mapRef.current || !vehicle.routeShortName) return;
+    
+    try {
+      // Fetch route shape from API
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+      const response = await fetch(`${apiBaseUrl}/routes/${vehicle.routeShortName}/shape`);
+      
+      if (!response.ok) {
+        console.error("Failed to fetch route shape");
+        return;
+      }
+      
+      const data = await response.json();
+      
+      if (data.geometry?.coordinates) {
+        setViewedRouteShape({
+          routeId: vehicle.routeShortName,
+          coordinates: data.geometry.coordinates,
+          color: vehicle.color || "#22c55e",
+        });
+        
+        // Fit map to show full route
+        const bounds = new mapboxgl.LngLatBounds();
+        data.geometry.coordinates.forEach((coord: [number, number]) => {
+          bounds.extend(coord);
+        });
+        
+        mapRef.current.fitBounds(bounds, {
+          padding: { top: 100, bottom: 100, left: 100, right: 100 },
+          duration: 1000,
+        });
+      }
+    } catch (error) {
+      console.error("Error fetching route shape:", error);
+    }
+  }, []);
+
+  // Draw/update route shape on map
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    const map = mapRef.current;
+    
+    // Remove existing route layer and source
+    if (map.getLayer("viewed-route-line")) {
+      map.removeLayer("viewed-route-line");
+    }
+    if (map.getSource("viewed-route")) {
+      map.removeSource("viewed-route");
+    }
+    
+    // If no route to display, we're done
+    if (!viewedRouteShape) return;
+    
+    // Add the route line
+    map.addSource("viewed-route", {
+      type: "geojson",
+      data: {
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "LineString",
+          coordinates: viewedRouteShape.coordinates,
+        },
+      },
+    });
+    
+    // Find the first symbol layer to insert the route below labels
+    const layers = map.getStyle().layers;
+    const labelLayerId = layers?.find(
+      layer => layer.type === "symbol" && layer.layout && layer.layout["text-field"]
+    )?.id;
+    
+    map.addLayer({
+      id: "viewed-route-line",
+      type: "line",
+      source: "viewed-route",
+      layout: {
+        "line-join": "round",
+        "line-cap": "round",
+      },
+      paint: {
+        "line-color": viewedRouteShape.color,
+        "line-width": 5,
+        "line-opacity": 0.85,
+      },
+    }, labelLayerId);
+    
+  }, [viewedRouteShape, mapLoaded, styleChangeCounter]);
+
   // Auto-fetch user location on page load (silently, without flying)
   useEffect(() => {
     // Only fetch if we don't already have location
@@ -1348,24 +1534,12 @@ const Map = ({
       <div className="flex-1 h-full relative bg-black overflow-hidden">
         <div ref={mapContainerRef} className="w-full h-full" />
 
-        {/* 3D Train Models - Only render when live trains or simulation is enabled */}
-        {mapLoaded && use3DTrains && (showLiveTrains || showSimulation) && (
-          <Train3DLayer
+        {/* Vehicle Markers - Render when live trains/buses is enabled OR when tracking any vehicle */}
+        {mapLoaded && (showLiveTrains || showLiveBuses || trackedVehicle) && (
+          <VehicleLayer
             map={mapInstance}
-            // Pass real-time data only when live trains toggle is on
-            redTrains={
-              showLiveTrains && hasRealTimeData
-                ? transformedRedTrains
-                : undefined
-            }
-            blueTrains={
-              showLiveTrains && hasRealTimeData
-                ? transformedBlueTrains
-                : undefined
-            }
-            // Pass simulation data only when simulation toggle is on
-            redTrainPosition={showSimulation ? redTrain.trainPosition : null}
-            blueTrainPosition={showSimulation ? blueTrain.trainPosition : null}
+            vehicles={allVehicles}
+            onViewRoute={handleViewRoute}
           />
         )}
 
@@ -1399,41 +1573,43 @@ const Map = ({
         {/* Zoom Controls - bottom right */}
         {mapLoaded && <MapControls />}
 
-        {/* Train Following Controls - Only show when live trains or simulation is active */}
-        {(showLiveTrains || showSimulation) && (
-          <div className="absolute bottom-20 left-7 flex flex-col gap-2 rounded-2xl z-10">
-            <button
-              onClick={() =>
-                setFollowingTrain(followingTrain === "Red" ? null : "Red")
-              }
-              className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
-                followingTrain === "Red"
-                  ? "bg-red-500 border-white text-white"
-                  : "bg-black/80 border-red-500 text-red-500"
-              }`}
-            >
-              {followingTrain === "Red" ? "STOP FOLLOWING" : "FOLLOW RED TRAIN"}
-            </button>
-            <button
-              onClick={() =>
-                setFollowingTrain(followingTrain === "Blue" ? null : "Blue")
-              }
-              className={`px-4 py-2 rounded-full border text-xs font-bold transition-all ${
-                followingTrain === "Blue"
-                  ? "bg-blue-500 border-white text-white"
-                  : "bg-black/80 border-blue-500 text-blue-500"
-              }`}
-            >
-              {followingTrain === "Blue"
-                ? "STOP FOLLOWING"
-                : "FOLLOW BLUE TRAIN"}
-            </button>
+        {/* Vehicle Tracking Panel - Only show when tracking a vehicle */}
+        {trackedVehicle && (
+          <div className="absolute bottom-20 left-7 z-10">
+            <div className="bg-black/90 backdrop-blur-sm border border-zinc-700 rounded-2xl p-4 min-w-[200px]">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  {trackedVehicle.vehicleType === "Bus" ? (
+                    <Bus className="size-4 text-green-500" />
+                  ) : (
+                    <Train className={`size-4 ${trackedVehicle.line === "Red" ? "text-red-500" : "text-blue-500"}`} />
+                  )}
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                    trackedVehicle.vehicleType === "Bus"
+                      ? "bg-green-500/20 text-green-400"
+                      : trackedVehicle.line === "Red" 
+                        ? "bg-red-500/20 text-red-400" 
+                        : "bg-blue-500/20 text-blue-400"
+                  }`}>
+                    {trackedVehicle.routeShortName}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setTrackedVehicle(null)}
+                  className="p-1 hover:bg-white/10 rounded-lg transition-colors"
+                  aria-label="Stop tracking"
+                >
+                  <X className="size-4 text-zinc-400" />
+                </button>
+              </div>
+              <div className="text-sm text-white font-medium truncate">
+                {trackedVehicle.headsign}
+              </div>
+              <div className="text-xs text-zinc-400 mt-1">
+                Tracking live {trackedVehicle.vehicleType === "Bus" ? "bus" : "train"} position
+              </div>
+            </div>
           </div>
-        )}
-
-        {/* Train Speed Controls - Only show when simulation is active */}
-        {showSimulation && (
-          <TrainControls redTrain={redTrain} blueTrain={blueTrain} />
         )}
 
         {/* Map Action Buttons */}
@@ -1502,24 +1678,6 @@ const Map = ({
             )}
           </button>
 
-          {/* Simulation Toggle */}
-          <button
-            onClick={() => setShowSimulation(!showSimulation)}
-            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
-              showSimulation
-                ? "bg-orange-600/90 border-orange-500 hover:bg-orange-500"
-                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
-            }`}
-            aria-label={showSimulation ? "Stop simulation" : "Start simulation"}
-            title={showSimulation ? "Stop simulation" : "Start simulation"}
-          >
-            <Play
-              className={`w-5 h-5 ${
-                showSimulation ? "text-white" : "text-zinc-300"
-              }`}
-            />
-          </button>
-
           {/* Bus Stops Toggle */}
           <button
             onClick={() => setShowBusStops(!showBusStops)}
@@ -1536,6 +1694,28 @@ const Map = ({
                 showBusStops ? "text-white" : "text-zinc-300"
               }`}
             />
+          </button>
+
+          {/* Live Buses Toggle */}
+          <button
+            onClick={() => setShowLiveBuses(!showLiveBuses)}
+            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+              showLiveBuses && transformedBuses.length > 0
+                ? "bg-emerald-600/90 border-emerald-500 hover:bg-emerald-500"
+                : showLiveBuses && transformedBuses.length === 0
+                ? "bg-amber-600/90 border-amber-500 hover:bg-amber-500"
+                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
+            }`}
+            aria-label={showLiveBuses ? "Hide live buses" : "Show live buses"}
+            title={showLiveBuses ? "Hide live buses" : "Show live buses"}
+          >
+            {isFetchingBuses && showLiveBuses ? (
+              <Loader2 className="w-5 h-5 text-white animate-spin" />
+            ) : (
+              <span className="text-lg" role="img" aria-label="bus">
+                🚌
+              </span>
+            )}
           </button>
 
           {/* Train Lines Toggle */}
@@ -1559,50 +1739,42 @@ const Map = ({
           </button>
         </div>
 
-        {/* Train Status Indicator - Only show when live trains or simulation is active */}
-        {mapLoaded && (showLiveTrains || showSimulation) && (
+        {/* Train/Bus Status Indicator - Only show when live vehicles is active */}
+        {mapLoaded && (showLiveTrains || showLiveBuses) && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
             <div
               className={`flex items-center gap-2 px-4 py-2 rounded-xl backdrop-blur-sm border text-xs font-medium transition-all ${
-                showLiveTrains && hasRealTimeData
+                hasRealTimeData
                   ? "bg-green-900/80 border-green-700 text-green-200"
-                  : showLiveTrains && isLoadingTrains
+                  : isLoadingTrains || isFetchingBuses
                   ? "bg-amber-900/80 border-amber-700 text-amber-200"
-                  : showLiveTrains && isTrainError
+                  : isTrainError
                   ? "bg-red-900/80 border-red-700 text-red-200"
-                  : showSimulation
-                  ? "bg-orange-900/80 border-orange-700 text-orange-200"
                   : "bg-zinc-900/80 border-zinc-700 text-zinc-300"
               }`}
             >
-              {showLiveTrains && hasRealTimeData ? (
+              {hasRealTimeData ? (
                 <>
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                   </span>
                   <span>
-                    LIVE • {transformedRedTrains.length} Red,{" "}
-                    {transformedBlueTrains.length} Blue
+                    LIVE • 
+                    {showLiveTrains && ` ${transformedRedTrains.length} Red, ${transformedBlueTrains.length} Blue`}
+                    {showLiveTrains && showLiveBuses && " | "}
+                    {showLiveBuses && `${transformedBuses.length} Buses`}
                   </span>
                 </>
-              ) : showLiveTrains && isLoadingTrains ? (
+              ) : isLoadingTrains || isFetchingBuses ? (
                 <>
                   <Loader2 className="w-3 h-3 animate-spin" />
                   <span>Connecting to live data...</span>
                 </>
-              ) : showLiveTrains && isTrainError ? (
+              ) : isTrainError ? (
                 <>
                   <WifiOff className="w-3 h-3" />
                   <span>Live data unavailable</span>
-                </>
-              ) : showSimulation ? (
-                <>
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
-                  </span>
-                  <span>SIMULATION MODE</span>
                 </>
               ) : null}
             </div>

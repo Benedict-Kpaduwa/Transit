@@ -124,16 +124,18 @@ export const stationApi = {
 export const ctrainApi = {
   /**
    * Get all real-time C-Train positions
-   * @param line - Optional filter: "RED" or "BLUE"
+   * @param line - Optional filter: "RED" or "BLUE" (or "Red"/"Blue")
    */
-  getPositions: async (line?: "RED" | "BLUE"): Promise<CTrainPosition[]> => {
+  getPositions: async (line?: "RED" | "BLUE" | "Red" | "Blue"): Promise<CTrainPosition[]> => {
     try {
-      const params = line ? { line } : {};
-      const response = await api.get<CTrainResponse>("/ctrains", { params });
-      return response.data.ctrains;
+      // Normalize line to match API expectations
+      const lineParam = line ? (line.charAt(0).toUpperCase() + line.slice(1).toLowerCase()) : undefined;
+      const params = lineParam ? { line: lineParam } : {};
+      const response = await api.get<CTrainResponse>("/vehicles/ctrains", { params });
+      return response.data.vehicles || [];
     } catch (error) {
       console.error("Error fetching C-Train positions:", error);
-      throw error;
+      return [];
     }
   },
 
@@ -141,11 +143,11 @@ export const ctrainApi = {
    * Get C-Train positions by line
    */
   getRedLinePositions: async (): Promise<CTrainPosition[]> => {
-    return ctrainApi.getPositions("RED");
+    return ctrainApi.getPositions("Red");
   },
 
   getBlueLinePositions: async (): Promise<CTrainPosition[]> => {
-    return ctrainApi.getPositions("BLUE");
+    return ctrainApi.getPositions("Blue");
   },
 
   /**
@@ -158,9 +160,10 @@ export const ctrainApi = {
   }> => {
     try {
       const allTrains = await ctrainApi.getPositions();
+      // Handle both uppercase and mixed case line names
       return {
-        red: allTrains.filter((t) => t.line === "RED"),
-        blue: allTrains.filter((t) => t.line === "BLUE"),
+        red: allTrains.filter((t) => t.line?.toUpperCase() === "RED"),
+        blue: allTrains.filter((t) => t.line?.toUpperCase() === "BLUE"),
         all: allTrains,
       };
     } catch (error) {
