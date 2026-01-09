@@ -8,6 +8,7 @@ export interface TrainPositionData {
   bearing: number;
   nearestStation?: string;
   vehicleId?: string;
+  tripId?: string;
 }
 
 interface Train3DLayerProps {
@@ -18,6 +19,40 @@ interface Train3DLayerProps {
   // New props for multiple real trains
   redTrains?: TrainPositionData[];
   blueTrains?: TrainPositionData[];
+}
+
+// Animation duration in milliseconds - slightly less than poll interval for smooth overlap
+const ANIMATION_DURATION = 9500;
+
+// Linear easing for constant speed movement (more natural for transit)
+function linear(t: number): number {
+  return t;
+}
+
+// Interpolate between two values
+function lerp(start: number, end: number, t: number): number {
+  return start + (end - start) * t;
+}
+
+// Interpolate bearing (handle 360 degree wraparound)
+function lerpBearing(start: number, end: number, t: number): number {
+  let diff = end - start;
+  // Handle wraparound
+  if (diff > 180) diff -= 360;
+  if (diff < -180) diff += 360;
+  return start + diff * t;
+}
+
+// Store animation state for each train
+interface AnimationState {
+  startLng: number;
+  startLat: number;
+  startBearing: number;
+  targetLng: number;
+  targetLat: number;
+  targetBearing: number;
+  startTime: number;
+  animationId: number | null;
 }
 
 // Create a 3D-looking train marker element
@@ -171,10 +206,92 @@ export default function Train3DLayer({
   const redMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const blueMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
 
+  // Animation states for smooth transitions
+  const redAnimationsRef = useRef<Map<string, AnimationState>>(new Map());
+  const blueAnimationsRef = useRef<Map<string, AnimationState>>(new Map());
+
   const styleAddedRef = useRef(false);
 
   // Determine if we're using real data or simulation
   const useRealData = redTrains.length > 0 || blueTrains.length > 0;
+
+  // Animate a marker smoothly from current to target position
+  const animateMarker = useCallback(
+    (
+      marker: mapboxgl.Marker,
+      trainId: string,
+      targetLng: number,
+      targetLat: number,
+      targetBearing: number,
+      animationsRef: React.MutableRefObject<Map<string, AnimationState>>
+    ) => {
+      // Get current position as starting point
+      const currentPos = marker.getLngLat();
+      const currentRotation = marker.getRotation() + 90; // Convert back from display rotation
+
+      // Cancel any existing animation for this train
+      const existingAnimation = animationsRef.current.get(trainId);
+      if (existingAnimation?.animationId) {
+        cancelAnimationFrame(existingAnimation.animationId);
+      }
+
+      // If this is a new marker or position hasn't changed significantly, snap directly
+      const distance = Math.sqrt(
+        Math.pow(targetLng - currentPos.lng, 2) +
+          Math.pow(targetLat - currentPos.lat, 2)
+      );
+
+      if (distance < 0.00001) {
+        // Position barely changed, just update bearing
+        marker.setRotation(targetBearing - 90);
+        return;
+      }
+
+      // Create new animation state
+      const animState: AnimationState = {
+        startLng: currentPos.lng,
+        startLat: currentPos.lat,
+        startBearing: currentRotation,
+        targetLng,
+        targetLat,
+        targetBearing,
+        startTime: performance.now(),
+        animationId: null,
+      };
+
+      const animate = (currentTime: number) => {
+        const elapsed = currentTime - animState.startTime;
+        const progress = Math.min(elapsed / ANIMATION_DURATION, 1);
+        const easedProgress = linear(progress);
+
+        // Interpolate position and bearing
+        const lng = lerp(animState.startLng, animState.targetLng, easedProgress);
+        const lat = lerp(animState.startLat, animState.targetLat, easedProgress);
+        const bearing = lerpBearing(
+          animState.startBearing,
+          animState.targetBearing,
+          easedProgress
+        );
+
+        // Update marker position
+        marker.setLngLat([lng, lat]);
+        marker.setRotation(bearing - 90);
+
+        // Continue animation if not complete
+        if (progress < 1) {
+          animState.animationId = requestAnimationFrame(animate);
+          animationsRef.current.set(trainId, animState);
+        } else {
+          animationsRef.current.delete(trainId);
+        }
+      };
+
+      // Start animation
+      animState.animationId = requestAnimationFrame(animate);
+      animationsRef.current.set(trainId, animState);
+    },
+    []
+  );
 
   // Add CSS styles for animations
   const addStyles = useCallback(() => {
@@ -185,7 +302,7 @@ export default function Train3DLayer({
     style.textContent = `
       .train-3d-marker {
         cursor: pointer;
-        transition: transform 0.1s ease-out;
+        will-change: transform;
       }
       
       .train-3d-marker:hover {
@@ -252,7 +369,7 @@ export default function Train3DLayer({
     };
   }, [map, addStyles, useRealData]);
 
-  // Manage multiple red train markers for real data
+  // Manage multiple red train markers for real data with smooth animation
   useEffect(() => {
     if (!map || !useRealData) return;
 
@@ -274,18 +391,25 @@ export default function Train3DLayer({
     // Remove markers that are no longer in the data
     existingIds.forEach((id) => {
       if (!currentIds.has(id)) {
+        // Cancel any ongoing animation
+        const animation = redAnimationsRef.current.get(id);
+        if (animation?.animationId) {
+          cancelAnimationFrame(animation.animationId);
+        }
+        redAnimationsRef.current.delete(id);
+
         const marker = redMarkersRef.current.get(id);
         marker?.remove();
         redMarkersRef.current.delete(id);
       }
     });
 
-    // Add or update markers
+    // Add or update markers with smooth animation
     validTrains.forEach((train) => {
       let marker = redMarkersRef.current.get(train.id);
 
       if (!marker) {
-        // Create new marker with initial position
+        // Create new marker with initial position (no animation for new markers)
         const el = createTrainMarkerElement("red");
         marker = new mapboxgl.Marker({
           element: el,
@@ -293,24 +417,38 @@ export default function Train3DLayer({
           pitchAlignment: "map",
         })
           .setLngLat([train.lng, train.lat])
+          .setRotation((train.bearing || 0) - 90)
           .addTo(map);
         redMarkersRef.current.set(train.id, marker);
       } else {
-        // Update position for existing marker
-        marker.setLngLat([train.lng, train.lat]);
+        // Animate to new position
+        animateMarker(
+          marker,
+          train.id,
+          train.lng,
+          train.lat,
+          train.bearing || 0,
+          redAnimationsRef
+        );
       }
-
-      marker.setRotation((train.bearing || 0) - 90);
     });
 
     return () => {
+      // Cancel all animations on unmount
+      redAnimationsRef.current.forEach((animation) => {
+        if (animation.animationId) {
+          cancelAnimationFrame(animation.animationId);
+        }
+      });
+      redAnimationsRef.current.clear();
+
       // Cleanup all markers on unmount
       redMarkersRef.current.forEach((marker) => marker.remove());
       redMarkersRef.current.clear();
     };
-  }, [map, redTrains, useRealData, addStyles]);
+  }, [map, redTrains, useRealData, addStyles, animateMarker]);
 
-  // Manage multiple blue train markers for real data
+  // Manage multiple blue train markers for real data with smooth animation
   useEffect(() => {
     if (!map || !useRealData) return;
 
@@ -332,18 +470,25 @@ export default function Train3DLayer({
     // Remove markers that are no longer in the data
     existingIds.forEach((id) => {
       if (!currentIds.has(id)) {
+        // Cancel any ongoing animation
+        const animation = blueAnimationsRef.current.get(id);
+        if (animation?.animationId) {
+          cancelAnimationFrame(animation.animationId);
+        }
+        blueAnimationsRef.current.delete(id);
+
         const marker = blueMarkersRef.current.get(id);
         marker?.remove();
         blueMarkersRef.current.delete(id);
       }
     });
 
-    // Add or update markers
+    // Add or update markers with smooth animation
     validTrains.forEach((train) => {
       let marker = blueMarkersRef.current.get(train.id);
 
       if (!marker) {
-        // Create new marker with initial position
+        // Create new marker with initial position (no animation for new markers)
         const el = createTrainMarkerElement("blue");
         marker = new mapboxgl.Marker({
           element: el,
@@ -351,22 +496,36 @@ export default function Train3DLayer({
           pitchAlignment: "map",
         })
           .setLngLat([train.lng, train.lat])
+          .setRotation((train.bearing || 0) - 90)
           .addTo(map);
         blueMarkersRef.current.set(train.id, marker);
       } else {
-        // Update position for existing marker
-        marker.setLngLat([train.lng, train.lat]);
+        // Animate to new position
+        animateMarker(
+          marker,
+          train.id,
+          train.lng,
+          train.lat,
+          train.bearing || 0,
+          blueAnimationsRef
+        );
       }
-
-      marker.setRotation((train.bearing || 0) - 90);
     });
 
     return () => {
+      // Cancel all animations on unmount
+      blueAnimationsRef.current.forEach((animation) => {
+        if (animation.animationId) {
+          cancelAnimationFrame(animation.animationId);
+        }
+      });
+      blueAnimationsRef.current.clear();
+
       // Cleanup all markers on unmount
       blueMarkersRef.current.forEach((marker) => marker.remove());
       blueMarkersRef.current.clear();
     };
-  }, [map, blueTrains, useRealData, addStyles]);
+  }, [map, blueTrains, useRealData, addStyles, animateMarker]);
 
   // Update single red train position (simulation mode)
   useEffect(() => {
@@ -394,3 +553,4 @@ export default function Train3DLayer({
 
   return null;
 }
+
