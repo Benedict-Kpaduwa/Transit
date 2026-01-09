@@ -876,26 +876,46 @@ const Map = ({
       }
 
       // Extract the segment (handle both directions)
-      // Extend the segment to track endpoints when close to the ends
-      // This ensures CTrain lines visually connect to terminal stations
+      // Only extend to track endpoints if the station is geographically close to the endpoint
       const trackLength = bestTrack.length;
-      const extensionThreshold = 20; // If within 20 points of track end, extend to the end
+      const trackStart = bestTrack[0];
+      const trackEnd = bestTrack[trackLength - 1];
+      
+      // Calculate distances from from/to coords to track endpoints (squared, for comparison)
+      const distToTrackStart = (coords: [number, number]) => {
+        const dx = coords[0] - trackStart[0];
+        const dy = coords[1] - trackStart[1];
+        return dx * dx + dy * dy;
+      };
+      const distToTrackEnd = (coords: [number, number]) => {
+        const dx = coords[0] - trackEnd[0];
+        const dy = coords[1] - trackEnd[1];
+        return dx * dx + dy * dy;
+      };
+      
+      // Threshold: ~200m in degrees squared (roughly 0.002 degrees = 200m at Calgary's latitude)
+      const geoThreshold = 0.002 * 0.002;
       
       let startIdx = bestFromIdx;
       let endIdx = bestToIdx;
+      
+      // Determine which coord is closer to track start vs end
+      const fromIsStart = startIdx < endIdx ? true : false;
+      const startCoord = fromIsStart ? fromCoords : toCoords;
+      const endCoord = fromIsStart ? toCoords : fromCoords;
       
       // Swap if needed to ensure startIdx <= endIdx
       if (startIdx > endIdx) {
         [startIdx, endIdx] = [endIdx, startIdx];
       }
       
-      // Extend to track start if we're near the beginning
-      if (startIdx < extensionThreshold) {
+      // Only extend to track start if station is actually near the track start geographically
+      if (startIdx < 20 && distToTrackStart(startCoord) < geoThreshold) {
         startIdx = 0;
       }
       
-      // Extend to track end if we're near the end
-      if (endIdx > trackLength - extensionThreshold - 1) {
+      // Only extend to track end if station is actually near the track end geographically
+      if (endIdx > trackLength - 20 - 1 && distToTrackEnd(endCoord) < geoThreshold) {
         endIdx = trackLength - 1;
       }
       

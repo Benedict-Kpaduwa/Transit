@@ -295,7 +295,33 @@ async def transform_transit_api_response(
                 elif to_coords:
                     last_coords = to_coords
 
+    # Merge consecutive transit segments with the same route
+    merged_segments = []
+    for segment in segments:
+        if (
+            merged_segments
+            and segment["type"] == "transit"
+            and merged_segments[-1]["type"] == "transit"
+            and segment.get("route_short_name") == merged_segments[-1].get("route_short_name")
+            and segment.get("headsign") == merged_segments[-1].get("headsign")
+        ):
+            # Merge with previous segment
+            prev = merged_segments[-1]
+            prev["to"] = segment["to"]
+            prev["num_stops"] = prev.get("num_stops", 0) + segment.get("num_stops", 0)
+            prev["stops_count"] = prev.get("stops_count", 0) + segment.get("stops_count", 0)
+            prev["duration"] = prev.get("duration", 0) + segment.get("duration", 0)
+            prev["arrival_time"] = segment.get("arrival_time")
+            # Merge geometry if both have it
+            if segment.get("geometry") and prev.get("geometry"):
+                prev_coords = prev["geometry"].get("coordinates", [])
+                new_coords = segment["geometry"].get("coordinates", [])
+                prev["geometry"]["coordinates"] = prev_coords + new_coords
+        else:
+            merged_segments.append(segment)
     
+    segments = merged_segments
+
     # Calculate total duration
     total_duration = result.get("duration", 0)
     
