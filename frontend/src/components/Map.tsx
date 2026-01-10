@@ -1540,6 +1540,7 @@ const Map = ({
             map={mapInstance}
             vehicles={allVehicles}
             onViewRoute={handleViewRoute}
+            trackedVehicleId={trackedVehicle?.tripId || trackedVehicle?.vehicleId || null}
           />
         )}
 

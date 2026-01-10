@@ -21,6 +21,7 @@ interface VehicleLayerProps {
   vehicles: VehiclePositionData[];
   onVehicleClick?: (vehicle: VehiclePositionData) => void;
   onViewRoute?: (vehicle: VehiclePositionData) => void;
+  trackedVehicleId?: string | null; // ID of the tracked vehicle to show 3D model
 }
 
 // Animation duration - match polling interval for smooth continuous movement
@@ -140,6 +141,298 @@ function createVehicleMarkerElement(
       ` : ""}
     </div>
   `;
+
+  return el;
+}
+
+// ============================================
+// Singleton 3D Renderer - Uses single WebGL context to prevent context exhaustion
+// ============================================
+
+interface Model3DInstance {
+  canvasId: string;
+  vehicleType: "CTrain" | "Bus";
+}
+
+// Singleton state for 3D rendering
+let sharedRenderer: {
+  initialized: boolean;
+  animationId: number | null;
+  offscreenCanvas: HTMLCanvasElement | null;
+  renderer: any; // THREE.WebGLRenderer
+  scene: any; // THREE.Scene
+  camera: any; // THREE.PerspectiveCamera
+  trainModel: any; // THREE.Group
+  busModel: any; // THREE.Group
+  rotation: number;
+  activeCanvases: Map<string, Model3DInstance>;
+} = {
+  initialized: false,
+  animationId: null,
+  offscreenCanvas: null,
+  renderer: null,
+  scene: null,
+  camera: null,
+  trainModel: null,
+  busModel: null,
+  rotation: 0,
+  activeCanvases: new Map(),
+};
+
+// Initialize the shared 3D renderer (called once)
+async function initShared3DRenderer() {
+  if (sharedRenderer.initialized) return;
+  sharedRenderer.initialized = true;
+
+  const THREE = await import('three');
+  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+
+  // Create offscreen canvas for rendering
+  const offscreenCanvas = document.createElement('canvas');
+  offscreenCanvas.width = 120; // 60 * 2 for retina
+  offscreenCanvas.height = 120;
+  sharedRenderer.offscreenCanvas = offscreenCanvas;
+
+  // Create scene
+  const scene = new THREE.Scene();
+  scene.background = null;
+  sharedRenderer.scene = scene;
+
+  // Create camera
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+  camera.position.set(0, 1.5, 3);
+  camera.lookAt(0, 0, 0);
+  sharedRenderer.camera = camera;
+
+  // Create renderer with offscreen canvas
+  const renderer = new THREE.WebGLRenderer({
+    canvas: offscreenCanvas,
+    alpha: true,
+    antialias: true,
+    powerPreference: 'low-power', // Prefer integrated GPU to save resources
+  });
+  renderer.setSize(120, 120);
+  renderer.setPixelRatio(1); // We're already at 2x size
+  sharedRenderer.renderer = renderer;
+
+  // Add lights
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+  scene.add(ambientLight);
+
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+  directionalLight.position.set(5, 5, 5);
+  scene.add(directionalLight);
+
+  // Load both models
+  const loader = new GLTFLoader();
+
+  // Load train model
+  loader.load('/models/train.glb', (gltf) => {
+    const model = gltf.scene;
+    centerAndScaleModel(THREE, model);
+    model.visible = false; // Initially hidden
+    scene.add(model);
+    sharedRenderer.trainModel = model;
+    console.log('Train model loaded for singleton renderer');
+  }, undefined, (error) => {
+    console.error('Error loading train model:', error);
+  });
+
+  // Load bus model
+  loader.load('/models/bus.glb', (gltf) => {
+    const model = gltf.scene;
+    centerAndScaleModel(THREE, model);
+    model.visible = false; // Initially hidden
+    scene.add(model);
+    sharedRenderer.busModel = model;
+    console.log('Bus model loaded for singleton renderer');
+  }, undefined, (error) => {
+    console.error('Error loading bus model:', error);
+  });
+
+  // Start animation loop
+  startSharedAnimationLoop();
+}
+
+// Center and scale a model to fit in the viewport
+function centerAndScaleModel(THREE: any, model: any) {
+  const box = new THREE.Box3().setFromObject(model);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const scale = 1.5 / maxDim;
+
+  model.scale.setScalar(scale);
+  model.position.sub(center.multiplyScalar(scale));
+}
+
+// Shared animation loop - renders to offscreen canvas then copies to all active marker canvases
+function startSharedAnimationLoop() {
+  const animate = () => {
+    sharedRenderer.animationId = requestAnimationFrame(animate);
+
+    if (!sharedRenderer.renderer || !sharedRenderer.scene || !sharedRenderer.camera) return;
+
+    // Update rotation
+    sharedRenderer.rotation += 0.02;
+
+    // For each active canvas, render the appropriate model and copy
+    sharedRenderer.activeCanvases.forEach((instance, canvasId) => {
+      const targetCanvas = document.getElementById(canvasId) as HTMLCanvasElement;
+      if (!targetCanvas) {
+        // Canvas no longer exists, remove from active list
+        sharedRenderer.activeCanvases.delete(canvasId);
+        return;
+      }
+
+      const model = instance.vehicleType === 'CTrain' 
+        ? sharedRenderer.trainModel 
+        : sharedRenderer.busModel;
+
+      if (!model) return;
+
+      // Show only this model
+      if (sharedRenderer.trainModel) sharedRenderer.trainModel.visible = false;
+      if (sharedRenderer.busModel) sharedRenderer.busModel.visible = false;
+      model.visible = true;
+
+      // Apply rotation
+      model.rotation.y = sharedRenderer.rotation;
+
+      // Render to offscreen canvas
+      sharedRenderer.renderer!.render(sharedRenderer.scene!, sharedRenderer.camera!);
+
+      // Copy to target canvas
+      const ctx = targetCanvas.getContext('2d');
+      if (ctx && sharedRenderer.offscreenCanvas) {
+        ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+        ctx.drawImage(sharedRenderer.offscreenCanvas, 0, 0, targetCanvas.width, targetCanvas.height);
+      }
+    });
+
+    // If no active canvases, hide all models but keep loop running
+    if (sharedRenderer.activeCanvases.size === 0) {
+      if (sharedRenderer.trainModel) sharedRenderer.trainModel.visible = false;
+      if (sharedRenderer.busModel) sharedRenderer.busModel.visible = false;
+    }
+  };
+
+  animate();
+}
+
+// Register a canvas to receive 3D model renders
+function register3DModelCanvas(canvasId: string, vehicleType: "CTrain" | "Bus") {
+  sharedRenderer.activeCanvases.set(canvasId, { canvasId, vehicleType });
+  
+  // Initialize renderer if not already done
+  initShared3DRenderer();
+}
+
+// Unregister a canvas (cleanup)
+function unregister3DModelCanvas(canvasId: string) {
+  sharedRenderer.activeCanvases.delete(canvasId);
+}
+
+// Create 3D model-based marker for tracked vehicles using singleton renderer
+function create3DModelMarkerElement(
+  vehicleType: "CTrain" | "Bus",
+  color: string,
+  routeShortName?: string
+): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = "vehicle-marker vehicle-marker-3d";
+
+  const canvasId = `model-canvas-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  el.innerHTML = `
+    <div class="vehicle-marker-container" style="
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      cursor: pointer;
+      transform: translateX(-50%) translateY(-50%);
+    ">
+      <!-- 3D Model Container -->
+      <div style="
+        position: relative;
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      ">
+        <!-- Outer pulse ring -->
+        <div style="
+          position: absolute;
+          width: 75px;
+          height: 75px;
+          border-radius: 50%;
+          background: radial-gradient(circle, ${color}50 0%, ${color}20 50%, transparent 70%);
+          animation: tracked-pulse 1.5s ease-in-out infinite;
+        "></div>
+        
+        <!-- 3D Model Canvas -->
+        <canvas 
+          id="${canvasId}" 
+          data-vehicle-type="${vehicleType}"
+          width="120" 
+          height="120" 
+          style="
+            width: 60px;
+            height: 60px;
+            background: transparent;
+            border-radius: 50%;
+            box-shadow: 0 0 20px ${color}60, 0 0 40px ${color}30;
+          "
+        ></canvas>
+      </div>
+      
+      <!-- Route label with "TRACKING" badge -->
+      <div style="
+        margin-top: 4px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+      ">
+        <div style="
+          padding: 3px 10px;
+          background: linear-gradient(135deg, ${color} 0%, ${color}dd 100%);
+          color: white;
+          font-size: 12px;
+          font-weight: 700;
+          border-radius: 6px;
+          white-space: nowrap;
+          box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+          letter-spacing: 0.3px;
+        ">
+          ${routeShortName || (vehicleType === "CTrain" ? "CTrain" : "Bus")}
+        </div>
+        <div style="
+          padding: 2px 8px;
+          background: linear-gradient(135deg, rgba(34, 197, 94, 0.95) 0%, rgba(22, 163, 74, 0.95) 100%);
+          color: white;
+          font-size: 9px;
+          font-weight: 600;
+          border-radius: 4px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          box-shadow: 0 2px 6px rgba(34, 197, 94, 0.4);
+          animation: tracking-blink 1s ease-in-out infinite;
+          display: flex;
+          align-items: center;
+          gap: 3px;
+        ">
+          <span style="font-size: 10px;">📍</span> Tracking
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Register canvas with singleton renderer after element is added to DOM
+  setTimeout(() => {
+    register3DModelCanvas(canvasId, vehicleType);
+  }, 50);
 
   return el;
 }
@@ -293,6 +586,7 @@ export default function VehicleLayer({
   vehicles,
   onVehicleClick,
   onViewRoute,
+  trackedVehicleId,
 }: VehicleLayerProps) {
   const markersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const animationsRef = useRef<Map<string, AnimationState>>(new Map());
@@ -386,6 +680,10 @@ export default function VehicleLayer({
         z-index: 10;
       }
       
+      .vehicle-marker-3d {
+        z-index: 100;
+      }
+      
       .vehicle-marker:hover {
         z-index: 100;
       }
@@ -400,6 +698,37 @@ export default function VehicleLayer({
         }
         50% {
           box-shadow: 0 2px 12px rgba(0,0,0,0.4), 0 0 0 5px rgba(255,255,255,0.7);
+        }
+      }
+      
+      @keyframes tracked-pulse {
+        0%, 100% {
+          transform: scale(1);
+          opacity: 0.6;
+        }
+        50% {
+          transform: scale(1.15);
+          opacity: 0.9;
+        }
+      }
+      
+      @keyframes tracking-blink {
+        0%, 100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.6;
+        }
+      }
+      
+      @keyframes tracked-inner-pulse {
+        0%, 100% {
+          transform: scale(1);
+          box-shadow: 0 0 20px currentColor, 0 0 40px currentColor;
+        }
+        50% {
+          transform: scale(1.05);
+          box-shadow: 0 0 30px currentColor, 0 0 60px currentColor;
         }
       }
       
@@ -495,14 +824,27 @@ export default function VehicleLayer({
         ? (vehicle.routeShortName === "201" ? "#DC2626" : "#2563EB")
         : "#22c55e");
 
+      // Check if this vehicle is being tracked
+      const isTracked = trackedVehicleId && (
+        vehicle.id === trackedVehicleId ||
+        vehicle.tripId === trackedVehicleId ||
+        vehicle.vehicleId === trackedVehicleId
+      );
+
       if (!marker) {
-        // Create new marker
-        const el = createVehicleMarkerElement(
-          vehicle.vehicleType,
-          color,
-          vehicle.routeShortName,
-          vehicle.bearing
-        );
+        // Create new marker - use 3D model for tracked vehicles, 2D icon for regular
+        const el = isTracked
+          ? create3DModelMarkerElement(
+              vehicle.vehicleType,
+              color,
+              vehicle.routeShortName
+            )
+          : createVehicleMarkerElement(
+              vehicle.vehicleType,
+              color,
+              vehicle.routeShortName,
+              vehicle.bearing
+            );
 
         // Add click handler
         el.addEventListener("click", (e) => {
@@ -522,14 +864,53 @@ export default function VehicleLayer({
 
         markersRef.current.set(vehicle.id, marker);
       } else {
-        // Animate to new position
-        animateMarker(
-          marker,
-          vehicle.id,
-          vehicle.lng,
-          vehicle.lat,
-          vehicle.bearing || 0
-        );
+        // If tracking status changed, we need to recreate the marker
+        const existingEl = marker.getElement();
+        const currentlyIsTracked = existingEl.classList.contains("vehicle-marker-3d");
+        
+        if (isTracked !== currentlyIsTracked) {
+          // Remove old marker and create new one with correct element type
+          marker.remove();
+          
+          const el = isTracked
+            ? create3DModelMarkerElement(
+                vehicle.vehicleType,
+                color,
+                vehicle.routeShortName
+              )
+            : createVehicleMarkerElement(
+                vehicle.vehicleType,
+                color,
+                vehicle.routeShortName,
+                vehicle.bearing
+              );
+
+          el.addEventListener("click", (e) => {
+            e.stopPropagation();
+            showPopup(vehicle);
+            if (onVehicleClick) {
+              onVehicleClick(vehicle);
+            }
+          });
+
+          marker = new mapboxgl.Marker({
+            element: el,
+            anchor: "center",
+          })
+            .setLngLat([vehicle.lng, vehicle.lat])
+            .addTo(map);
+
+          markersRef.current.set(vehicle.id, marker);
+        } else {
+          // Standard update - animate to new position
+          animateMarker(
+            marker,
+            vehicle.id,
+            vehicle.lng,
+            vehicle.lat,
+            vehicle.bearing || 0
+          );
+        }
       }
     });
 
@@ -551,7 +932,7 @@ export default function VehicleLayer({
       markersRef.current.forEach((marker) => marker.remove());
       markersRef.current.clear();
     };
-  }, [map, vehicles, onVehicleClick, addStyles, animateMarker, showPopup]);
+  }, [map, vehicles, onVehicleClick, addStyles, animateMarker, showPopup, trackedVehicleId]);
 
   return null;
 }
