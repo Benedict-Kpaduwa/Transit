@@ -408,8 +408,8 @@ function create3DModelMarkerElement(
       <!-- 3D Model Container -->
       <div style="
         position: relative;
-        width: 100px;
-        height: 100px;
+        width: 80px;
+        height: 80px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -417,8 +417,8 @@ function create3DModelMarkerElement(
         <!-- Outer pulse ring -->
         <div style="
           position: absolute;
-          width: 95px;
-          height: 95px;
+          width: 75px;
+          height: 75px;
           border-radius: 50%;
           background: radial-gradient(circle, ${color}50 0%, ${color}20 50%, transparent 70%);
           animation: tracked-pulse 1.5s ease-in-out infinite;
@@ -431,11 +431,11 @@ function create3DModelMarkerElement(
           width="200" 
           height="200" 
           style="
-            width: 90px;
-            height: 90px;
+            width: 60px;
+            height: 60px;
             background: transparent;
             border-radius: 50%;
-            box-shadow: 0 0 25px ${color}70, 0 0 50px ${color}40;
+            box-shadow: 0 0 20px ${color}60, 0 0 40px ${color}30;
           "
         ></canvas>
       </div>

@@ -840,6 +840,11 @@ const Map = ({
       setShowLiveTrains(true);
     }
     
+    // Automatically show train lines when tracking a CTrain
+    if (trackedVehicle.vehicleType === "CTrain" && !showTrainLines) {
+      setShowTrainLines(true);
+    }
+    
     // Find the vehicle by tripId or vehicleId in all vehicles
     const vehicle = allVehicles.find(v => v.tripId === trackedVehicle.tripId) 
       || allVehicles.find(v => v.vehicleId === trackedVehicle.vehicleId);
@@ -856,7 +861,7 @@ const Map = ({
         essential: true, // Animation will happen even if user prefers reduced motion
       });
     }
-  }, [trackedVehicle, allVehicles, showLiveTrains]);
+  }, [trackedVehicle, allVehicles, showLiveTrains, showTrainLines]);
 
   // Continuously follow tracked vehicle
   useEffect(() => {
