@@ -824,7 +824,9 @@ const Map = ({
         center: selectedStation.coords,
         zoom: 15,
         pitch: 60,
-        duration: 1500,
+        speed: 1.2, // Smooth animation speed
+        curve: 1.42, // Smooth easing curve
+        essential: true,
       });
     }
   }, [selectedStation]);
@@ -843,13 +845,15 @@ const Map = ({
       || allVehicles.find(v => v.vehicleId === trackedVehicle.vehicleId);
     
     if (vehicle) {
-      // Fly to the vehicle's position
+      // Fly to the vehicle's position with smooth animation (like station search)
       mapRef.current.flyTo({
         center: [vehicle.lng, vehicle.lat],
         zoom: 16,
         pitch: 60,
         bearing: vehicle.bearing,
-        duration: 1500,
+        speed: 1.2, // Smooth animation speed
+        curve: 1.42, // Smooth easing curve
+        essential: true, // Animation will happen even if user prefers reduced motion
       });
     }
   }, [trackedVehicle, allVehicles, showLiveTrains]);
