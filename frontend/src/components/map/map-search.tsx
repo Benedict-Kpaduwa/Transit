@@ -24,9 +24,10 @@ interface MapSearchProps {
     address: string;
     coordinates: [number, number];
   }) => void;
+  onClear?: () => void;
 }
 
-export default function MapSearch({ onGetDirections }: MapSearchProps) {
+export default function MapSearch({ onGetDirections, onClear }: MapSearchProps) {
   const { map } = useMap();
   const [query, setQuery] = useState("");
   const [displayValue, setDisplayValue] = useState("");
@@ -166,7 +167,10 @@ export default function MapSearch({ onGetDirections }: MapSearchProps) {
     setError(null);
     setSelectedLocation(null);
     setSelectedLocations([]);
-  }, []);
+    
+    // Call onClear callback to reset map
+    onClear?.();
+  }, [onClear]);
 
   const hasResults = results.length > 0;
   const showEmptyState =

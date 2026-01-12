@@ -881,6 +881,28 @@ const Map = ({
     }
   }, [trackedVehicle, allVehicles]);
 
+  // Stop tracking and reset map to original state
+  const stopTracking = useCallback(() => {
+    // Clear tracked vehicle
+    setTrackedVehicle(null);
+    
+    // Hide train lines (reset to default)
+    setShowTrainLines(false);
+    
+    // Reset map view to original position
+    if (mapRef.current) {
+      mapRef.current.flyTo({
+        center: MAP_CONSTANTS.CENTER,
+        zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
+        pitch: MAP_CONSTANTS.DEFAULT_PITCH,
+        bearing: 0,
+        speed: 1.2,
+        curve: 1.42,
+        essential: true,
+      });
+    }
+  }, [setTrackedVehicle]);
+
   // Create user location marker element
   const createUserLocationEl = useCallback(() => {
     const el = document.createElement("div");
@@ -1353,9 +1375,25 @@ const Map = ({
     setTripPlan(plan);
   }, []);
 
-  // Handle clearing route
+  // Handle clearing route - reset map to original view
   const handleClearRoute = useCallback(() => {
     setTripPlan(null);
+    
+    // Hide train lines (reset to default)
+    setShowTrainLines(false);
+    
+    // Reset map view to original position
+    if (mapRef.current) {
+      mapRef.current.flyTo({
+        center: MAP_CONSTANTS.CENTER,
+        zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
+        pitch: MAP_CONSTANTS.DEFAULT_PITCH,
+        bearing: 0,
+        speed: 1.2,
+        curve: 1.42,
+        essential: true,
+      });
+    }
   }, []);
 
   // Handle "Get Directions" from search result popup
@@ -1369,6 +1407,25 @@ const Map = ({
     },
     []
   );
+
+  // Handle clearing search - reset map to original view
+  const handleClearSearch = useCallback(() => {
+    // Hide train lines (reset to default)
+    setShowTrainLines(false);
+    
+    // Reset map view to original position
+    if (mapRef.current) {
+      mapRef.current.flyTo({
+        center: MAP_CONSTANTS.CENTER,
+        zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
+        pitch: MAP_CONSTANTS.DEFAULT_PITCH,
+        bearing: 0,
+        speed: 1.2,
+        curve: 1.42,
+        essential: true,
+      });
+    }
+  }, []);
 
   // Clear external destination after it's consumed by TripPlanner
   const handleClearExternalDestination = useCallback(() => {
@@ -1554,7 +1611,7 @@ const Map = ({
         )}
 
         {/* Map Search - top center */}
-        {mapLoaded && <MapSearch onGetDirections={handleGetDirections} />}
+        {mapLoaded && <MapSearch onGetDirections={handleGetDirections} onClear={handleClearSearch} />}
 
         {/* Station Search - top left */}
         {/* {mapLoaded && (
@@ -1605,7 +1662,7 @@ const Map = ({
                   </span>
                 </div>
                 <button
-                  onClick={() => setTrackedVehicle(null)}
+                  onClick={stopTracking}
                   className="p-1 hover:bg-white/10 rounded-lg transition-colors"
                   aria-label="Stop tracking"
                 >
