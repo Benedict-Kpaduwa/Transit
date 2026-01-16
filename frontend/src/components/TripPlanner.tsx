@@ -13,11 +13,11 @@ import {
   Bus,
 } from "lucide-react";
 import {
-  tripPlannerApi,
   type GeocodingResult,
   type TripPlan,
   type TripSegment,
 } from "@/services/api";
+import { useGeocode, usePlanTripMutation } from "@/hooks/queries";
 import { useDebounce } from "@/hooks/useDebounce";
 import { cn } from "@/lib/utils";
 
@@ -317,20 +317,29 @@ export default function TripPlanner({
   const [useCurrentLocationForOrigin, setUseCurrentLocationForOrigin] =
     useState(false);
 
-  const [originSuggestions, setOriginSuggestions] = useState<GeocodingResult[]>(
-    []
-  );
-  const [destSuggestions, setDestSuggestions] = useState<GeocodingResult[]>([]);
-  const [isLoadingOrigin, setIsLoadingOrigin] = useState(false);
-  const [isLoadingDest, setIsLoadingDest] = useState(false);
   const [showOriginSuggestions, setShowOriginSuggestions] = useState(false);
   const [showDestSuggestions, setShowDestSuggestions] = useState(false);
 
   const [tripPlan, setTripPlan] = useState<TripPlan | null>(null);
-  const [isPlanning, setIsPlanning] = useState(false);
+
+  // Use TanStack Query mutation for trip planning
+  const planTripMutation = usePlanTripMutation();
 
   const debouncedOriginQuery = useDebounce(originQuery, 300);
   const debouncedDestQuery = useDebounce(destQuery, 300);
+
+  // Use TanStack Query for geocoding instead of useEffect
+  const { data: originSuggestions = [], isLoading: isLoadingOrigin } = useGeocode(
+    debouncedOriginQuery,
+    userLocation,
+    { enabled: !useCurrentLocationForOrigin && showOriginSuggestions }
+  );
+
+  const { data: destSuggestions = [], isLoading: isLoadingDest } = useGeocode(
+    debouncedDestQuery,
+    userLocation,
+    { enabled: showDestSuggestions }
+  );
 
   // Handle external destination (from "Get Directions" button)
   useEffect(() => {
@@ -356,78 +365,17 @@ export default function TripPlanner({
     }
   }, [externalDestination, userLocation, onClearExternalDestination]);
 
-  // Geocode origin query
-  useEffect(() => {
-    if (!debouncedOriginQuery || useCurrentLocationForOrigin) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const searchOrigin = async () => {
-      setIsLoadingOrigin(true);
-      const results = await tripPlannerApi.geocode(
-        debouncedOriginQuery,
-        userLocation
-          ? { lng: userLocation.lng, lat: userLocation.lat }
-          : undefined
-      );
-      if (!cancelled) {
-        setOriginSuggestions(results);
-        setIsLoadingOrigin(false);
-      }
-    };
-
-    searchOrigin();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedOriginQuery, userLocation, useCurrentLocationForOrigin]);
-
-  // Geocode destination query
-  useEffect(() => {
-    // Skip if no query
-    if (!debouncedDestQuery) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const searchDest = async () => {
-      setIsLoadingDest(true);
-      const results = await tripPlannerApi.geocode(
-        debouncedDestQuery,
-        userLocation
-          ? { lng: userLocation.lng, lat: userLocation.lat }
-          : undefined
-      );
-      if (!cancelled) {
-        setDestSuggestions(results);
-        setIsLoadingDest(false);
-      }
-    };
-
-    searchDest();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedDestQuery, userLocation]);
-
   const handleUseCurrentLocation = useCallback(() => {
     if (userLocation) {
       setUseCurrentLocationForOrigin(true);
       setOriginCoords(userLocation);
       setOriginQuery("");
-      setOriginSuggestions([]);
     }
   }, [userLocation]);
 
   const handleOriginSelect = useCallback((result: GeocodingResult) => {
     setOriginQuery(result.name);
     setOriginCoords({ lng: result.coordinates[0], lat: result.coordinates[1] });
-    setOriginSuggestions([]);
     setShowOriginSuggestions(false);
     setUseCurrentLocationForOrigin(false);
   }, []);
@@ -435,30 +383,33 @@ export default function TripPlanner({
   const handleDestSelect = useCallback((result: GeocodingResult) => {
     setDestQuery(result.name);
     setDestCoords({ lng: result.coordinates[0], lat: result.coordinates[1] });
-    setDestSuggestions([]);
     setShowDestSuggestions(false);
   }, []);
 
-  const handlePlanTrip = useCallback(async () => {
+  const handlePlanTrip = useCallback(() => {
     const origin = useCurrentLocationForOrigin ? userLocation : originCoords;
     if (!origin || !destCoords) return;
 
-    setIsPlanning(true);
     setTripPlan(null);
 
-    const result = await tripPlannerApi.planTrip(origin, destCoords, true);
-    setTripPlan(result);
-    setIsPlanning(false);
-
-    if (result.success) {
-      onRouteCalculated(result);
-    }
+    planTripMutation.mutate(
+      { origin, destination: destCoords, preferLrt: true },
+      {
+        onSuccess: (result) => {
+          setTripPlan(result);
+          if (result.success) {
+            onRouteCalculated(result);
+          }
+        },
+      }
+    );
   }, [
     originCoords,
     destCoords,
     userLocation,
     useCurrentLocationForOrigin,
     onRouteCalculated,
+    planTripMutation,
   ]);
 
   const handleClear = useCallback(() => {
@@ -524,7 +475,6 @@ export default function TripPlanner({
                 setOriginQuery(val);
                 setUseCurrentLocationForOrigin(false);
                 setOriginCoords(null);
-                if (!val) setOriginSuggestions([]);
               }}
               onSelect={handleOriginSelect}
               onUseCurrentLocation={
@@ -548,7 +498,6 @@ export default function TripPlanner({
               onChange={(val) => {
                 setDestQuery(val);
                 setDestCoords(null);
-                if (!val) setDestSuggestions([]);
               }}
               onSelect={handleDestSelect}
               icon={<div className="w-2 h-2 rounded-full bg-red-500" />}
@@ -564,10 +513,10 @@ export default function TripPlanner({
             <div className="flex gap-2 pt-2">
               <button
                 onClick={handlePlanTrip}
-                disabled={!canPlanTrip || isPlanning}
+                disabled={!canPlanTrip || planTripMutation.isPending}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:cursor-not-allowed rounded-xl text-sm font-medium text-white transition-colors"
               >
-                {isPlanning ? (
+                {planTripMutation.isPending ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Planning...

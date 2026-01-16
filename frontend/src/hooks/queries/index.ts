@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { stationApi, ctrainApi, busStopApi, vehiclesApi, type Vehicle } from "@/services/api";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { stationApi, ctrainApi, busStopApi, vehiclesApi, tripPlannerApi, type Vehicle, type GeocodingResult, type TripPlan, type NearbyStop } from "@/services/api";
 
 export const useAllStations = () => {
   const { data, isLoading, error, refetch, isError } = useQuery({
@@ -165,3 +165,93 @@ export const useBusPositions = (
 // Re-export Vehicle type for use in components
 export type { Vehicle };
 
+// ==================== Geocoding & Trip Planning Hooks ====================
+
+/**
+ * Hook to geocode an address/place name
+ * Uses the debounced query to avoid excessive API calls
+ */
+export const useGeocode = (
+  query: string,
+  proximity?: { lng: number; lat: number } | null,
+  options?: { enabled?: boolean }
+) => {
+  const { enabled = true } = options || {};
+
+  return useQuery<GeocodingResult[]>({
+    queryKey: ["geocode", query, proximity?.lng, proximity?.lat],
+    queryFn: () =>
+      tripPlannerApi.geocode(
+        query,
+        proximity ? { lng: proximity.lng, lat: proximity.lat } : undefined
+      ),
+    enabled: enabled && query.length >= 2, // Only search when query is at least 2 chars
+    staleTime: 1000 * 60 * 5, // Cache results for 5 minutes
+    gcTime: 1000 * 60 * 10, // Keep in cache for 10 minutes
+  });
+};
+
+/**
+ * Hook to find nearby transit stops
+ */
+export const useNearbyStops = (
+  location: { lat: number; lng: number } | null,
+  options?: {
+    limit?: number;
+    maxDistance?: number;
+    stopType?: "LRT" | "BUS";
+    enabled?: boolean;
+  }
+) => {
+  const { enabled = true, ...apiOptions } = options || {};
+
+  return useQuery<NearbyStop[]>({
+    queryKey: ["nearby-stops", location?.lat, location?.lng, apiOptions],
+    queryFn: () =>
+      tripPlannerApi.findNearbyStops(location!.lat, location!.lng, apiOptions),
+    enabled: enabled && !!location,
+    staleTime: 1000 * 60, // Cache for 1 minute
+  });
+};
+
+/**
+ * Hook to plan a trip between two locations
+ */
+export const usePlanTrip = (
+  origin: { lng: number; lat: number } | null,
+  destination: { lng: number; lat: number } | null,
+  options?: {
+    preferLrt?: boolean;
+    enabled?: boolean;
+  }
+) => {
+  const { preferLrt = true, enabled = true } = options || {};
+
+  return useQuery<TripPlan>({
+    queryKey: ["trip-plan", origin?.lng, origin?.lat, destination?.lng, destination?.lat, preferLrt],
+    queryFn: () => tripPlannerApi.planTrip(origin!, destination!, preferLrt),
+    enabled: enabled && !!origin && !!destination,
+    staleTime: 1000 * 60 * 2, // Cache for 2 minutes
+    gcTime: 1000 * 60 * 5, // Keep in cache for 5 minutes
+  });
+};
+
+// Re-export types for convenience
+export type { GeocodingResult, TripPlan, NearbyStop };
+
+// ==================== Mutation Hooks ====================
+
+/**
+ * Mutation hook for planning a trip
+ * Use this when you need to trigger trip planning on-demand (e.g., button click)
+ */
+export const usePlanTripMutation = () => {
+  return useMutation<
+    TripPlan,
+    Error,
+    { origin: { lng: number; lat: number }; destination: { lng: number; lat: number }; preferLrt?: boolean }
+  >({
+    mutationFn: ({ origin, destination, preferLrt = true }) =>
+      tripPlannerApi.planTrip(origin, destination, preferLrt),
+  });
+};

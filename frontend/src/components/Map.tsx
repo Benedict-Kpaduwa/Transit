@@ -3,7 +3,7 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Station, RouteLine, CTrainPosition } from "@/types";
 import { useCTrainPositionsByLine, useBusStops, useBusPositions } from "@/hooks/queries";
-import { TripPlannerPanel } from "./trip-planner";
+import TripPlanner from "./TripPlanner";
 import { type TripPlan } from "@/services/api";
 import {
   Zap,
@@ -1710,7 +1710,7 @@ const Map = ({
 
         {/* Trip Planner - Google Maps style floating panel */}
         {mapLoaded && (
-          <TripPlannerPanel
+          <TripPlanner
             userLocation={userLocation}
             onRouteCalculated={handleRouteCalculated}
             onClearRoute={handleClearRoute}
