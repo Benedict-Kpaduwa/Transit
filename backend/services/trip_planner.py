@@ -142,6 +142,147 @@ def load_routes_data() -> pd.DataFrame:
     return pd.read_csv(routes_path)
 
 
+def load_shapes_data() -> pd.DataFrame:
+    """Load shapes data from GTFS"""
+    shapes_path = GTFS_DATA_DIR / "shapes.txt"
+    if not shapes_path.exists():
+        raise FileNotFoundError("GTFS shapes.txt not found")
+    return pd.read_csv(shapes_path)
+
+
+# Cache for CTrain track coordinates
+_ctrain_tracks_cache: Dict[str, List[List[float]]] = {}
+
+
+def get_ctrain_track_geometry(
+    from_coords: Tuple[float, float],
+    to_coords: Tuple[float, float],
+    line: str,  # "Red Line" or "Blue Line"
+) -> Optional[Dict]:
+    """
+    Get CTrain track segment geometry between two station coordinates.
+    Uses GTFS shapes data to extract the actual track path.
+    
+    Args:
+        from_coords: (lon, lat) of origin station
+        to_coords: (lon, lat) of destination station  
+        line: CTrain line name ("Red Line" or "Blue Line")
+    
+    Returns:
+        Dict with geometry (LineString type) or None
+    """
+    global _ctrain_tracks_cache
+    
+    try:
+        # Determine route ID based on line
+        if "red" in line.lower():
+            route_id = "201"
+        elif "blue" in line.lower():
+            route_id = "202"
+        else:
+            return None
+        
+        # Load and cache track data if not already cached
+        if route_id not in _ctrain_tracks_cache:
+            print(f"🚃 Loading CTrain track for route {route_id}...")
+            shapes_df = load_shapes_data()
+            trips_df = load_trips_data()
+            
+            # Get shape_ids for this route
+            route_trips = trips_df[
+                trips_df["route_id"].astype(str).str.startswith(f"{route_id}-")
+            ]
+            print(f"🚃 Found {len(route_trips)} trips for route {route_id}")
+            shape_ids = route_trips["shape_id"].unique()
+            print(f"🚃 Found {len(shape_ids)} unique shape IDs")
+            
+            # Find the longest shape (most complete track)
+            best_shape = None
+            best_length = 0
+            
+            for shape_id in shape_ids:
+                shape_points = shapes_df[shapes_df["shape_id"] == shape_id]
+                if len(shape_points) > best_length:
+                    best_length = len(shape_points)
+                    best_shape = shape_id
+            
+            if best_shape is None:
+                print(f"❌ No shapes found for route {route_id}")
+                return None
+            
+            print(f"🚃 Best shape: {best_shape} with {best_length} points")
+            
+            # Get coordinates for the best shape
+            shape_points = shapes_df[shapes_df["shape_id"] == best_shape].sort_values(
+                "shape_pt_sequence"
+            )
+            track_coords = [
+                [row["shape_pt_lon"], row["shape_pt_lat"]]
+                for _, row in shape_points.iterrows()
+            ]
+            _ctrain_tracks_cache[route_id] = track_coords
+            print(f"✅ Cached {len(track_coords)} track coordinates for {route_id}")
+        
+        track_coords = _ctrain_tracks_cache[route_id]
+        
+        if len(track_coords) < 2:
+            return None
+        
+        # Find closest points on track for from and to coordinates
+        def find_closest_index(coords: List[List[float]], target: Tuple[float, float]) -> int:
+            min_dist = float('inf')
+            closest_idx = 0
+            for i, coord in enumerate(coords):
+                dx = coord[0] - target[0]
+                dy = coord[1] - target[1]
+                dist = dx * dx + dy * dy
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_idx = i
+            return closest_idx
+        
+        from_idx = find_closest_index(track_coords, from_coords)
+        to_idx = find_closest_index(track_coords, to_coords)
+        
+        # Extract segment between the two indices
+        if from_idx <= to_idx:
+            segment = track_coords[from_idx:to_idx + 1]
+        else:
+            segment = track_coords[to_idx:from_idx + 1][::-1]
+        
+        if len(segment) < 2:
+            # Fallback to direct line
+            segment = [list(from_coords), list(to_coords)]
+        
+        # Ensure first point is from_coords and last is to_coords for seamless connection
+        if len(segment) > 0:
+            first_point = segment[0]
+            last_point = segment[-1]
+            
+            # Check if we need to add from_coords at start
+            from_dist = math.sqrt((first_point[0] - from_coords[0])**2 + (first_point[1] - from_coords[1])**2)
+            if from_dist > 0.0001:  # ~10 meters
+                segment = [list(from_coords)] + segment
+            
+            # Check if we need to add to_coords at end
+            to_dist = math.sqrt((last_point[0] - to_coords[0])**2 + (last_point[1] - to_coords[1])**2)
+            if to_dist > 0.0001:  # ~10 meters
+                segment = segment + [list(to_coords)]
+        
+        return {
+            "type": "LineString",
+            "coordinates": segment
+        }
+        
+    except Exception as e:
+        print(f"Error getting CTrain track geometry: {e}")
+        # Fallback to direct line
+        return {
+            "type": "LineString",
+            "coordinates": [list(from_coords), list(to_coords)]
+        }
+
+
 def find_nearest_stops(
     lat: float,
     lon: float,
@@ -1198,6 +1339,15 @@ async def build_single_leg_trip(
         )
         if bus_directions:
             transit_segment["geometry"] = bus_directions["geometry"]
+    else:
+        # Get CTrain track geometry for proper route visualization
+        ctrain_from_coords = (origin_stop["stop_lon"], origin_stop["stop_lat"])
+        ctrain_to_coords = (dest_stop["stop_lon"], dest_stop["stop_lat"])
+        ctrain_geometry = get_ctrain_track_geometry(
+            ctrain_from_coords, ctrain_to_coords, route["line"]
+        )
+        if ctrain_geometry:
+            transit_segment["geometry"] = ctrain_geometry
 
     segments.append(transit_segment)
     total_duration += transit_duration
@@ -1293,29 +1443,41 @@ async def build_transfer_trip(
 
         # 2. Take CTrain to transfer station
         ctrain_duration = ctrain_route["num_stops"] * 120
-        segments.append(
-            {
-                "type": "transit",
-                "instruction": f"Take {ctrain_route['line']} to {transfer_station['stop_name']}",
-                "line": ctrain_route["line"],
-                "vehicle_type": "CTrain",
-                "color": ctrain_route["color"],
-                "route_id": ctrain_route["route_id"],
-                "num_stops": ctrain_route["num_stops"],
-                "duration": ctrain_duration,
-                "from": {
-                    "name": origin_stop["stop_name"],
-                    "coordinates": [origin_stop["stop_lon"], origin_stop["stop_lat"]],
-                },
-                "to": {
-                    "name": transfer_station["stop_name"],
-                    "coordinates": [
-                        transfer_station["stop_lon"],
-                        transfer_station["stop_lat"],
-                    ],
-                },
-            }
+        
+        # Get CTrain track geometry for proper route visualization
+        ctrain_from_coords = (origin_stop["stop_lon"], origin_stop["stop_lat"])
+        ctrain_to_coords = (transfer_station["stop_lon"], transfer_station["stop_lat"])
+        ctrain_geometry = get_ctrain_track_geometry(
+            ctrain_from_coords, ctrain_to_coords, ctrain_route["line"]
         )
+        
+        ctrain_segment = {
+            "type": "transit",
+            "instruction": f"Take {ctrain_route['line']} to {transfer_station['stop_name']}",
+            "line": ctrain_route["line"],
+            "vehicle_type": "CTrain",
+            "color": ctrain_route["color"],
+            "route_id": ctrain_route["route_id"],
+            "num_stops": ctrain_route["num_stops"],
+            "duration": ctrain_duration,
+            "from": {
+                "name": origin_stop["stop_name"],
+                "coordinates": [origin_stop["stop_lon"], origin_stop["stop_lat"]],
+            },
+            "to": {
+                "name": transfer_station["stop_name"],
+                "coordinates": [
+                    transfer_station["stop_lon"],
+                    transfer_station["stop_lat"],
+                ],
+            },
+        }
+        
+        # Add geometry if available
+        if ctrain_geometry:
+            ctrain_segment["geometry"] = ctrain_geometry
+        
+        segments.append(ctrain_segment)
         total_duration += ctrain_duration
         transit_lines.append(ctrain_route["line"])
 
@@ -1517,29 +1679,41 @@ async def build_transfer_trip(
 
         # 4. Take CTrain to destination
         ctrain_duration = ctrain_route["num_stops"] * 120
-        segments.append(
-            {
-                "type": "transit",
-                "instruction": f"Take {ctrain_route['line']} to {dest_stop['stop_name']}",
-                "line": ctrain_route["line"],
-                "vehicle_type": "CTrain",
-                "color": ctrain_route["color"],
-                "route_id": ctrain_route["route_id"],
-                "num_stops": ctrain_route["num_stops"],
-                "duration": ctrain_duration,
-                "from": {
-                    "name": transfer_station["stop_name"],
-                    "coordinates": [
-                        transfer_station["stop_lon"],
-                        transfer_station["stop_lat"],
-                    ],
-                },
-                "to": {
-                    "name": dest_stop["stop_name"],
-                    "coordinates": [dest_stop["stop_lon"], dest_stop["stop_lat"]],
-                },
-            }
+        
+        # Get CTrain track geometry for proper route visualization
+        ctrain_from_coords = (transfer_station["stop_lon"], transfer_station["stop_lat"])
+        ctrain_to_coords = (dest_stop["stop_lon"], dest_stop["stop_lat"])
+        ctrain_geometry = get_ctrain_track_geometry(
+            ctrain_from_coords, ctrain_to_coords, ctrain_route["line"]
         )
+        
+        ctrain_segment = {
+            "type": "transit",
+            "instruction": f"Take {ctrain_route['line']} to {dest_stop['stop_name']}",
+            "line": ctrain_route["line"],
+            "vehicle_type": "CTrain",
+            "color": ctrain_route["color"],
+            "route_id": ctrain_route["route_id"],
+            "num_stops": ctrain_route["num_stops"],
+            "duration": ctrain_duration,
+            "from": {
+                "name": transfer_station["stop_name"],
+                "coordinates": [
+                    transfer_station["stop_lon"],
+                    transfer_station["stop_lat"],
+                ],
+            },
+            "to": {
+                "name": dest_stop["stop_name"],
+                "coordinates": [dest_stop["stop_lon"], dest_stop["stop_lat"]],
+            },
+        }
+        
+        # Add geometry if available
+        if ctrain_geometry:
+            ctrain_segment["geometry"] = ctrain_geometry
+        
+        segments.append(ctrain_segment)
         total_duration += ctrain_duration
         transit_lines.append(ctrain_route["line"])
 

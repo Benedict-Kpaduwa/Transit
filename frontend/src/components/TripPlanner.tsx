@@ -151,12 +151,43 @@ function LocationInput({
 function TripSegmentCard({
   segment,
   isLast,
+  stepIndex,
 }: {
   segment: TripSegment;
   isLast: boolean;
+  stepIndex: number;
 }) {
   const isWalk = segment.type === "walk";
   const isTrain = segment.vehicle_type === "CTrain";
+  
+  // Format duration nicely
+  const formatDuration = (seconds: number) => {
+    const mins = Math.round(seconds / 60);
+    if (mins < 60) return `${mins} min`;
+    const hrs = Math.floor(mins / 60);
+    const remainingMins = mins % 60;
+    return remainingMins > 0 ? `${hrs}h ${remainingMins}m` : `${hrs}h`;
+  };
+
+  // Get the appropriate background color
+  const getBgColor = () => {
+    if (isWalk) return "bg-gradient-to-br from-zinc-600 to-zinc-700";
+    if (isTrain) {
+      if (segment.color === "#DC143C") return "bg-gradient-to-br from-red-500 to-red-600";
+      return "bg-gradient-to-br from-blue-500 to-blue-600";
+    }
+    return "bg-gradient-to-br from-emerald-500 to-emerald-600";
+  };
+
+  // Get border color for the card
+  const getBorderColor = () => {
+    if (isWalk) return "border-zinc-700";
+    if (isTrain) {
+      if (segment.color === "#DC143C") return "border-red-500/30";
+      return "border-blue-500/30";
+    }
+    return "border-emerald-500/30";
+  };
 
   return (
     <div className="relative">
@@ -164,66 +195,101 @@ function TripSegmentCard({
       {!isLast && (
         <div
           className={cn(
-            "absolute left-5 top-12 w-0.5 h-[calc(100%-1rem)]",
-            isWalk ? "bg-zinc-600" : "bg-linear-to-b",
-            !isWalk && segment.color === "#DC143C" && "from-red-500 to-red-500",
-            !isWalk &&
-              segment.color === "#0088FF" &&
-              "from-blue-500 to-blue-500",
-            !isWalk &&
-              segment.color === "#22c55e" &&
-              "from-green-500 to-green-500"
+            "absolute left-[19px] top-14 w-0.5 h-[calc(100%-2rem)]",
+            isWalk 
+              ? "bg-linear-to-b from-zinc-600 to-zinc-700 border-l border-dashed border-zinc-500" 
+              : "bg-linear-to-b",
+            !isWalk && segment.color === "#DC143C" && "from-red-500 to-red-400",
+            !isWalk && segment.color === "#0088FF" && "from-blue-500 to-blue-400",
+            !isWalk && segment.color === "#22c55e" && "from-emerald-500 to-emerald-400"
           )}
         />
       )}
 
-      <div className="flex items-start gap-3">
-        {/* Icon */}
-        <div
-          className={cn(
-            "shrink-0 w-10 h-10 rounded-full flex items-center justify-center",
-            isWalk
-              ? "bg-zinc-700"
-              : isTrain
-              ? segment.color === "#DC143C"
-                ? "bg-red-500"
-                : "bg-blue-500"
-              : "bg-green-500"
-          )}
-        >
-          {isWalk ? (
-            <Footprints className="w-5 h-5 text-white" />
-          ) : isTrain ? (
-            <Train className="w-5 h-5 text-white" />
-          ) : (
-            <Bus className="w-5 h-5 text-white" />
-          )}
+      <div className={cn(
+        "flex items-start gap-3 p-3 rounded-xl border transition-all hover:bg-zinc-800/30",
+        getBorderColor(),
+        "bg-zinc-900/30"
+      )}>
+        {/* Step number + Icon */}
+        <div className="flex flex-col items-center gap-1">
+          <span className="text-[10px] font-bold text-zinc-500">{stepIndex}</span>
+          <div
+            className={cn(
+              "shrink-0 w-10 h-10 rounded-xl flex items-center justify-center shadow-lg",
+              getBgColor()
+            )}
+          >
+            {isWalk ? (
+              <Footprints className="w-5 h-5 text-white" />
+            ) : isTrain ? (
+              <Train className="w-5 h-5 text-white" />
+            ) : (
+              <Bus className="w-5 h-5 text-white" />
+            )}
+          </div>
         </div>
 
         {/* Content */}
-        <div className="flex-1 min-w-0 pb-4">
-          <p className="text-sm font-medium text-white">
-            {segment.instruction}
-          </p>
-          <div className="flex items-center gap-3 mt-1 text-xs text-zinc-400">
-            {segment.duration && (
-              <span className="flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                {Math.round(segment.duration / 60)} min
+        <div className="flex-1 min-w-0">
+          {/* Header with route badge */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {!isWalk && segment.route_short_name && (
+              <span 
+                className="px-2.5 py-1 rounded-lg text-xs font-bold text-white shadow-md"
+                style={{ backgroundColor: segment.color || (isTrain ? '#3b82f6' : '#22c55e') }}
+              >
+                {isTrain ? `${segment.route_short_name} Line` : `Route ${segment.route_short_name}`}
               </span>
             )}
+            {segment.duration && (
+              <span className="flex items-center gap-1 text-xs text-zinc-400 bg-zinc-800 px-2 py-1 rounded-lg">
+                <Clock className="w-3 h-3" />
+                {formatDuration(segment.duration)}
+              </span>
+            )}
+          </div>
+
+          {/* Instruction */}
+          <p className="text-sm font-medium text-white mt-2">
+            {segment.instruction}
+          </p>
+
+          {/* Details row */}
+          <div className="flex items-center gap-3 mt-2 text-xs text-zinc-400 flex-wrap">
             {segment.distance && (
-              <span>
+              <span className="flex items-center gap-1">
+                <MapPin className="w-3 h-3" />
                 {segment.distance < 1000
-                  ? `${segment.distance} m`
+                  ? `${Math.round(segment.distance)} m`
                   : `${(segment.distance / 1000).toFixed(1)} km`}
               </span>
             )}
-            {segment.num_stops && <span>{segment.num_stops} stops</span>}
+            {segment.num_stops && segment.num_stops > 0 && (
+              <span className="flex items-center gap-1 bg-zinc-800 px-2 py-0.5 rounded">
+                {segment.num_stops} {segment.num_stops === 1 ? 'stop' : 'stops'}
+              </span>
+            )}
+            {segment.headsign && (
+              <span className="flex items-center gap-1 text-zinc-500">
+                <ChevronRight className="w-3 h-3" />
+                towards {segment.headsign}
+              </span>
+            )}
           </div>
-          <p className="text-xs text-zinc-500 mt-1">
-            {segment.from.name} → {segment.to.name}
-          </p>
+
+          {/* From/To with visual indicator */}
+          <div className="mt-3 flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-green-500" />
+              <span className="text-zinc-400">{segment.from.name}</span>
+            </div>
+            <ChevronRight className="w-3 h-3 text-zinc-600" />
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-red-500" />
+              <span className="text-zinc-400">{segment.to.name}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -529,34 +595,80 @@ export default function TripPlanner({
             <div className="border-t border-zinc-800">
               {tripPlan.success && tripPlan.summary ? (
                 <>
-                  {/* Summary */}
-                  <div className="px-4 py-3 bg-zinc-800/50">
-                    <div className="flex items-center justify-between">
+                  {/* Enhanced Summary Card */}
+                  <div className="p-4 bg-linear-to-br from-zinc-800/80 to-zinc-900/80">
+                    {/* Time header */}
+                    <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-blue-400" />
-                        <span className="text-sm font-medium text-white">
-                          {tripPlan.summary.total_duration_text}
-                        </span>
+                        <div className="p-2 bg-blue-500/20 rounded-lg">
+                          <Navigation className="w-4 h-4 text-blue-400" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-zinc-400">Leave now</p>
+                          <p className="text-sm font-semibold text-white">
+                            Arrive ~{new Date(Date.now() + (tripPlan.summary.total_duration * 1000)).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                          </p>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-zinc-400">
-                        <Footprints className="w-3 h-3" />
-                        <span>
-                          {tripPlan.summary.total_walking_distance_text} walk
-                        </span>
+                      <div className="text-right">
+                        <div className="flex items-center gap-1.5 text-lg font-bold text-white">
+                          <Clock className="w-4 h-4 text-blue-400" />
+                          {tripPlan.summary.total_duration_text}
+                        </div>
                       </div>
                     </div>
-                    <p className="text-xs text-zinc-400 mt-1">
-                      via {tripPlan.summary.transit_line}
-                    </p>
+
+                    {/* Stats row */}
+                    <div className="flex items-center gap-4 p-2 bg-zinc-900/50 rounded-lg">
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                        <Footprints className="w-3.5 h-3.5" />
+                        <span>{tripPlan.summary.total_walking_distance_text} walk</span>
+                      </div>
+                      <div className="w-px h-4 bg-zinc-700" />
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                        <span>via</span>
+                        <span className="font-medium text-zinc-300">{tripPlan.summary.transit_line}</span>
+                      </div>
+                    </div>
+
+                    {/* Route preview icons */}
+                    <div className="flex items-center gap-1 mt-3 overflow-x-auto pb-1">
+                      {tripPlan.segments?.map((segment, idx) => (
+                        <div key={idx} className="flex items-center gap-1">
+                          <div 
+                            className={cn(
+                              "w-7 h-7 rounded-lg flex items-center justify-center shrink-0",
+                              segment.type === "walk" 
+                                ? "bg-zinc-700" 
+                                : segment.vehicle_type === "CTrain"
+                                  ? segment.color === "#DC143C" ? "bg-red-500" : "bg-blue-500"
+                                  : "bg-emerald-500"
+                            )}
+                          >
+                            {segment.type === "walk" ? (
+                              <Footprints className="w-3.5 h-3.5 text-white" />
+                            ) : segment.vehicle_type === "CTrain" ? (
+                              <Train className="w-3.5 h-3.5 text-white" />
+                            ) : (
+                              <Bus className="w-3.5 h-3.5 text-white" />
+                            )}
+                          </div>
+                          {idx < (tripPlan.segments?.length ?? 0) - 1 && (
+                            <ChevronRight className="w-3 h-3 text-zinc-600 shrink-0" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Segments */}
-                  <div className="px-4 py-3 max-h-[300px] overflow-y-auto">
+                  <div className="px-4 py-3 max-h-[320px] overflow-y-auto space-y-2">
                     {tripPlan.segments?.map((segment, index) => (
                       <TripSegmentCard
                         key={index}
                         segment={segment}
                         isLast={index === (tripPlan.segments?.length ?? 0) - 1}
+                        stepIndex={index + 1}
                       />
                     ))}
                   </div>

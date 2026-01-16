@@ -19,6 +19,7 @@ from services.gtfs_service import (
     get_trip,
     get_trip_stop_times,
 )
+from services.trip_planner import get_ctrain_track_geometry
 
 # Transit API Configuration
 TRANSIT_API_BASE_URL = "https://external.transitapp.com/v3/public"
@@ -240,9 +241,23 @@ async def transform_transit_api_response(
                         arrival_stop_id = stop_items[-1].get("global_stop_id", "")
                 
                 # For bus routes without polyline, fetch road geometry from Mapbox
+                # For CTrain routes without polyline, fetch track geometry from GTFS shapes
                 transit_geometry = None
                 if leg_coords:
                     transit_geometry = {"type": "LineString", "coordinates": leg_coords}
+                elif vehicle_type == "CTrain" and from_coords and to_coords and line:
+                    # Fetch CTrain track geometry from GTFS shapes
+                    try:
+                        ctrain_geometry = get_ctrain_track_geometry(
+                            (from_coords[0], from_coords[1]),
+                            (to_coords[0], to_coords[1]),
+                            line
+                        )
+                        if ctrain_geometry:
+                            transit_geometry = ctrain_geometry
+                            print(f"✅ CTrain geometry added: {len(ctrain_geometry.get('coordinates', []))} coords")
+                    except Exception as e:
+                        print(f"⚠️ Could not get CTrain track geometry: {e}")
                 elif vehicle_type == "Bus" and from_coords and to_coords:
                     # Fetch road-following geometry for bus routes
                     try:
@@ -1017,35 +1032,44 @@ async def plan_trip(
     else:
         instruction = f"Take Route {route.get('route_short_name')} towards {headsign}" if headsign else f"Take Route {route.get('route_short_name')}"
 
-    segments.append(
-        {
-            "type": "transit",
-            "instruction": instruction,
-            "vehicle_type": vehicle_type,
-            "route_id": route.get("route_id"),
-            "route_short_name": route.get("route_short_name"),
-            "route_long_name": route.get("route_long_name"),
-            "line": route.get("line"),
-            "color": route.get("color"),
-            "headsign": headsign,
-            "from": {
-                "name": origin_stop.get("stop_name"),
-                "stop_id": origin_stop.get("stop_id"),
-                "coordinates": [
-                    origin_stop.get("longitude"),
-                    origin_stop.get("latitude"),
-                ],
-            },
-            "to": {
-                "name": dest_stop.get("stop_name"),
-                "stop_id": dest_stop.get("stop_id"),
-                "coordinates": [dest_stop.get("longitude"), dest_stop.get("latitude")],
-            },
-            "num_stops": stops_count,
-            "duration": transit_duration_sec,
-            "stops": intermediate,
-        }
-    )
+    # Build transit segment with geometry
+    transit_segment = {
+        "type": "transit",
+        "instruction": instruction,
+        "vehicle_type": vehicle_type,
+        "route_id": route.get("route_id"),
+        "route_short_name": route.get("route_short_name"),
+        "route_long_name": route.get("route_long_name"),
+        "line": route.get("line"),
+        "color": route.get("color"),
+        "headsign": headsign,
+        "from": {
+            "name": origin_stop.get("stop_name"),
+            "stop_id": origin_stop.get("stop_id"),
+            "coordinates": [
+                origin_stop.get("longitude"),
+                origin_stop.get("latitude"),
+            ],
+        },
+        "to": {
+            "name": dest_stop.get("stop_name"),
+            "stop_id": dest_stop.get("stop_id"),
+            "coordinates": [dest_stop.get("longitude"), dest_stop.get("latitude")],
+        },
+        "num_stops": stops_count,
+        "duration": transit_duration_sec,
+        "stops": intermediate,
+    }
+    
+    # Add geometry for CTrain routes
+    if vehicle_type == "CTrain" and line_name:
+        ctrain_from_coords = (origin_stop.get("longitude"), origin_stop.get("latitude"))
+        ctrain_to_coords = (dest_stop.get("longitude"), dest_stop.get("latitude"))
+        ctrain_geometry = get_ctrain_track_geometry(ctrain_from_coords, ctrain_to_coords, line_name)
+        if ctrain_geometry:
+            transit_segment["geometry"] = ctrain_geometry
+    
+    segments.append(transit_segment)
 
     # Walking segment from transit stop
     walk_from = await get_walking_directions(
@@ -1348,33 +1372,42 @@ async def build_transfer_trip(
     )
 
     # First transit segment (e.g., CTrain)
-    segments.append(
-        {
-            "type": "transit",
-            "vehicle_type": first_route.get("vehicle_type"),
-            "route_id": first_route.get("route_id"),
-            "route_short_name": first_route.get("route_short_name"),
-            "line": first_route.get("line"),
-            "color": first_route.get("color"),
-            "from": {
-                "name": first_transit_stop.get("stop_name"),
-                "stop_id": first_transit_stop.get("stop_id"),
-                "coordinates": [
-                    first_transit_stop.get("longitude"),
-                    first_transit_stop.get("latitude"),
-                ],
-            },
-            "to": {
-                "name": transfer_stop.get("stop_name") if transfer_stop else "Transfer",
-                "stop_id": transfer_stop_id,
-                "coordinates": (
-                    [transfer_stop.get("stop_lon"), transfer_stop.get("stop_lat")]
-                    if transfer_stop
-                    else None
-                ),
-            },
-        }
-    )
+    first_segment = {
+        "type": "transit",
+        "vehicle_type": first_route.get("vehicle_type"),
+        "route_id": first_route.get("route_id"),
+        "route_short_name": first_route.get("route_short_name"),
+        "line": first_route.get("line"),
+        "color": first_route.get("color"),
+        "from": {
+            "name": first_transit_stop.get("stop_name"),
+            "stop_id": first_transit_stop.get("stop_id"),
+            "coordinates": [
+                first_transit_stop.get("longitude"),
+                first_transit_stop.get("latitude"),
+            ],
+        },
+        "to": {
+            "name": transfer_stop.get("stop_name") if transfer_stop else "Transfer",
+            "stop_id": transfer_stop_id,
+            "coordinates": (
+                [transfer_stop.get("stop_lon"), transfer_stop.get("stop_lat")]
+                if transfer_stop
+                else None
+            ),
+        },
+    }
+    
+    # Add geometry for CTrain routes
+    if first_route.get("vehicle_type") == "CTrain" and first_route.get("line"):
+        from_coords = (first_transit_stop.get("longitude"), first_transit_stop.get("latitude"))
+        to_coords = (transfer_stop.get("stop_lon"), transfer_stop.get("stop_lat")) if transfer_stop else None
+        if from_coords and to_coords:
+            ctrain_geometry = get_ctrain_track_geometry(from_coords, to_coords, first_route.get("line"))
+            if ctrain_geometry:
+                first_segment["geometry"] = ctrain_geometry
+    
+    segments.append(first_segment)
 
     # Walk to second transit (if needed)
     if transfer_stop and second_transit_stop:
@@ -1408,35 +1441,44 @@ async def build_transfer_trip(
                 }
             )
 
-    # Second transit segment (e.g., Bus)
-    segments.append(
-        {
-            "type": "transit",
-            "vehicle_type": second_route.get("vehicle_type"),
-            "route_id": second_route.get("route_id"),
-            "route_short_name": second_route.get("route_short_name"),
-            "line": second_route.get("line"),
-            "color": second_route.get("color"),
-            "headsign": second_route.get("headsign"),
-            "from": {
-                "name": second_transit_stop.get("stop_name"),
-                "stop_id": second_transit_stop.get("stop_id"),
-                "coordinates": [
-                    second_transit_stop.get("longitude"),
-                    second_transit_stop.get("latitude"),
-                ],
-            },
-            "to": {
-                "name": final_stop.get("stop_name"),
-                "stop_id": final_stop.get("stop_id"),
-                "coordinates": [
-                    final_stop.get("longitude"),
-                    final_stop.get("latitude"),
-                ],
-            },
-            "stops_count": second_route.get("stops_count"),
-        }
-    )
+    # Second transit segment (e.g., Bus or CTrain)
+    second_segment = {
+        "type": "transit",
+        "vehicle_type": second_route.get("vehicle_type"),
+        "route_id": second_route.get("route_id"),
+        "route_short_name": second_route.get("route_short_name"),
+        "line": second_route.get("line"),
+        "color": second_route.get("color"),
+        "headsign": second_route.get("headsign"),
+        "from": {
+            "name": second_transit_stop.get("stop_name"),
+            "stop_id": second_transit_stop.get("stop_id"),
+            "coordinates": [
+                second_transit_stop.get("longitude"),
+                second_transit_stop.get("latitude"),
+            ],
+        },
+        "to": {
+            "name": final_stop.get("stop_name"),
+            "stop_id": final_stop.get("stop_id"),
+            "coordinates": [
+                final_stop.get("longitude"),
+                final_stop.get("latitude"),
+            ],
+        },
+        "stops_count": second_route.get("stops_count"),
+    }
+    
+    # Add geometry for CTrain routes
+    if second_route.get("vehicle_type") == "CTrain" and second_route.get("line"):
+        from_coords = (second_transit_stop.get("longitude"), second_transit_stop.get("latitude"))
+        to_coords = (final_stop.get("longitude"), final_stop.get("latitude"))
+        if from_coords and to_coords:
+            ctrain_geometry = get_ctrain_track_geometry(from_coords, to_coords, second_route.get("line"))
+            if ctrain_geometry:
+                second_segment["geometry"] = ctrain_geometry
+    
+    segments.append(second_segment)
 
     # Walk from final stop to destination
     walk_from = await get_walking_directions(

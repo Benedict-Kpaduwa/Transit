@@ -774,7 +774,8 @@ export default function VehicleLayer({
       closeOnClick: true,
       maxWidth: "none",
       className: "vehicle-popup",
-      offset: 25,
+      anchor: "left",
+      offset: [40, 0],
     })
       .setLngLat([vehicle.lng, vehicle.lat])
       .setHTML(createPopupHTML(vehicle))

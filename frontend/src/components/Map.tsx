@@ -3,7 +3,7 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Station, RouteLine, CTrainPosition } from "@/types";
 import { useCTrainPositionsByLine, useBusStops, useBusPositions } from "@/hooks/queries";
-import TripPlanner from "./TripPlanner";
+import { TripPlannerPanel } from "./trip-planner";
 import { type TripPlan } from "@/services/api";
 import {
   Zap,
@@ -1061,11 +1061,44 @@ const Map = ({
         trackEnd: bestTrack[trackLength - 1],
       });
       
+      // Ensure the segment starts and ends at the exact station coordinates
+      // This fixes gaps between transit and walking segments
+      let result: [number, number][];
+      
       // Reverse if original direction was reverse
       if (bestFromIdx > bestToIdx) {
-        return segment.reverse();
+        result = segment.reverse();
+      } else {
+        result = segment;
       }
-      return segment;
+      
+      // Always ensure first point is exactly fromCoords and last is exactly toCoords
+      // This guarantees seamless connection with walking segments
+      if (result.length > 0) {
+        // Check if first point is significantly different from fromCoords
+        const firstPoint = result[0];
+        const distFromStart = Math.sqrt(
+          Math.pow(firstPoint[0] - fromCoords[0], 2) + 
+          Math.pow(firstPoint[1] - fromCoords[1], 2)
+        );
+        if (distFromStart > 0.00005) { // ~5 meters threshold
+          result = [fromCoords, ...result];
+        }
+        
+        // Check if last point is significantly different from toCoords
+        const lastPoint = result[result.length - 1];
+        const distFromEnd = Math.sqrt(
+          Math.pow(lastPoint[0] - toCoords[0], 2) + 
+          Math.pow(lastPoint[1] - toCoords[1], 2)
+        );
+        if (distFromEnd > 0.00005) { // ~5 meters threshold
+          result = [...result, toCoords];
+        }
+      } else {
+        result = [fromCoords, toCoords];
+      }
+      
+      return result;
     },
     [routeLines]
   );
@@ -1088,6 +1121,9 @@ const Map = ({
     }
     if (map.getLayer("trip-transit-route")) {
       map.removeLayer("trip-transit-route");
+    }
+    if (map.getLayer("trip-transit-glow")) {
+      map.removeLayer("trip-transit-glow");
     }
     if (map.getSource("trip-transit-route")) {
       map.removeSource("trip-transit-route");
@@ -1139,16 +1175,17 @@ const Map = ({
         // For Bus, use geometry from backend if available, otherwise direct line
         let routeCoordinates: [number, number][];
 
-        if (segment.vehicle_type === "CTrain") {
-          // Extract the segment of track between stations
+        // First check if backend provided geometry
+        if (segment.geometry?.coordinates) {
+          // Use backend-provided geometry (works for both CTrain and Bus)
+          routeCoordinates = segment.geometry.coordinates as [number, number][];
+        } else if (segment.vehicle_type === "CTrain") {
+          // Fallback: Extract CTrain segment from local track data
           routeCoordinates = getTrackSegment(
             fromCoords,
             toCoords,
             segment.line || "Red Line"
           );
-        } else if (segment.geometry?.coordinates) {
-          // Bus with road geometry from backend
-          routeCoordinates = segment.geometry.coordinates as [number, number][];
         } else {
           // Fallback to direct line
           routeCoordinates = [fromCoords, toCoords];
@@ -1227,10 +1264,10 @@ const Map = ({
           "line-cap": "round",
         },
         paint: {
-          "line-color": "#6366f1",
-          "line-width": 4,
-          "line-dasharray": [2, 2],
-          "line-opacity": 0.8,
+          "line-color": "#8b5cf6", // Purple for walking
+          "line-width": 5,
+          "line-dasharray": [1, 2], // More dots-like pattern
+          "line-opacity": 0.9,
         },
       });
     }
@@ -1257,6 +1294,24 @@ const Map = ({
         },
       });
 
+      // Glow layer (wider, semi-transparent underneath)
+      map.addLayer({
+        id: "trip-transit-glow",
+        type: "line",
+        source: "trip-transit-route",
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": 12,
+          "line-opacity": 0.3,
+          "line-blur": 3,
+        },
+      });
+
+      // Main route line
       map.addLayer({
         id: "trip-transit-route",
         type: "line",
@@ -1268,7 +1323,7 @@ const Map = ({
         paint: {
           "line-color": ["get", "color"],
           "line-width": 6,
-          "line-opacity": 0.9,
+          "line-opacity": 1,
         },
       });
     }
@@ -1292,14 +1347,22 @@ const Map = ({
 
       if (stop.type === "origin") {
         el.innerHTML = `
-          <div class="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center shadow-lg border-2 border-white">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+          <div class="relative flex items-center justify-center">
+            <div class="absolute w-12 h-12 rounded-full bg-green-500/30 animate-ping"></div>
+            <div class="absolute w-10 h-10 rounded-full bg-green-500/20"></div>
+            <div class="relative w-9 h-9 bg-linear-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center shadow-lg border-3 border-white">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+            </div>
           </div>
         `;
       } else if (stop.type === "destination") {
         el.innerHTML = `
-          <div class="w-8 h-8 bg-red-500 rounded-full flex items-center justify-center shadow-lg border-2 border-white">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+          <div class="relative flex items-center justify-center">
+            <div class="absolute w-12 h-12 rounded-full bg-red-500/30 animate-ping"></div>
+            <div class="absolute w-10 h-10 rounded-full bg-red-500/20"></div>
+            <div class="relative w-9 h-9 bg-linear-to-br from-red-400 to-red-600 rounded-full flex items-center justify-center shadow-lg border-3 border-white">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+            </div>
           </div>
         `;
       } else {
@@ -1431,6 +1494,28 @@ const Map = ({
   const handleClearExternalDestination = useCallback(() => {
     setExternalDestination(null);
   }, []);
+
+  // Handle closing station info - reset map and call original callback
+  const handleCloseStationInfoWithReset = useCallback(() => {
+    // Hide train lines (reset to default)
+    setShowTrainLines(false);
+    
+    // Reset map view to original position
+    if (mapRef.current) {
+      mapRef.current.flyTo({
+        center: MAP_CONSTANTS.CENTER,
+        zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
+        pitch: MAP_CONSTANTS.DEFAULT_PITCH,
+        bearing: 0,
+        speed: 1.2,
+        curve: 1.42,
+        essential: true,
+      });
+    }
+    
+    // Call original callback to clear selected station
+    onCloseStationInfo();
+  }, [onCloseStationInfo]);
 
   // Get user location
   const getUserLocation = useCallback((flyToLocation: boolean = true) => {
@@ -1623,9 +1708,9 @@ const Map = ({
 
         {/* Nearby Arrivals moved to Sidebar */}
 
-        {/* Trip Planner - top right, beside search */}
+        {/* Trip Planner - Google Maps style floating panel */}
         {mapLoaded && (
-          <TripPlanner
+          <TripPlannerPanel
             userLocation={userLocation}
             onRouteCalculated={handleRouteCalculated}
             onClearRoute={handleClearRoute}
@@ -1866,7 +1951,7 @@ const Map = ({
         {selectedStation && (
           <div className="absolute bottom-9 right-24 bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-5 min-w-[280px] shadow-2xl z-20">
             <button
-              onClick={onCloseStationInfo}
+              onClick={handleCloseStationInfoWithReset}
               className="absolute top-4 right-3 text-zinc-500 hover:text-zinc-300 transition-colors"
               aria-label="Close station info"
             >
