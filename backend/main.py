@@ -11,9 +11,7 @@ from config import settings
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from services.arrivals_service import (
-    get_all_ctrain_arrivals,
     get_nearby_stops_with_arrivals,
-    get_route_schedule,
     get_station_arrivals,
     get_stop_arrivals,
 )
@@ -30,14 +28,7 @@ from services.calgary_transit import (
 # Import new services
 from services.gtfs_service import (
     download_static_gtfs,
-    get_all_routes,
-    get_all_stops,
-    get_cache_stats,
-    get_realtime_arrivals,
-    get_route,
     get_route_shape,
-    get_routes_serving_stop,
-    get_stop,
     get_vehicle_positions,
     is_loaded,
     load_gtfs_static,
@@ -334,28 +325,6 @@ async def trip_plan_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/trip/plan")
-async def trip_plan_post(
-    origin_lng: float = Query(..., description="Origin longitude"),
-    origin_lat: float = Query(..., description="Origin latitude"),
-    dest_lng: float = Query(..., description="Destination longitude"),
-    dest_lat: float = Query(..., description="Destination latitude"),
-    prefer_lrt: bool = Query(True, description="Prefer CTrain routes"),
-    leave_time: Optional[int] = Query(None, description="Unix timestamp for departure"),
-    arrive_by: Optional[int] = Query(None, description="Unix timestamp for arrival"),
-    accessibility: str = Query("none", description="Accessibility preference: none, strict, or prioritize_step_free"),
-):
-    """Plan a transit trip (POST version)"""
-    return await trip_plan_endpoint(
-        origin_lng=origin_lng,
-        origin_lat=origin_lat,
-        dest_lng=dest_lng,
-        dest_lat=dest_lat,
-        prefer_lrt=prefer_lrt,
-        leave_time=leave_time,
-        arrive_by=arrive_by,
-        accessibility=accessibility,
-    )
 
 
 @app.get("/geocode")
@@ -434,57 +403,10 @@ async def all_stops(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/stops/{stop_id}")
-async def stop_detail(stop_id: str):
-    """Get details for a specific stop"""
-    stop = get_stop(stop_id)
-    if not stop:
-        raise HTTPException(status_code=404, detail=f"Stop {stop_id} not found")
-
-    routes = get_routes_serving_stop(stop_id)
-
-    return {
-        "stop": stop,
-        "routes": routes,
-    }
 
 
-@app.get("/routes")
-async def all_routes():
-    """Get all transit routes"""
-    routes = get_all_routes()
-
-    # Group by vehicle type
-    ctrains = [r for r in routes if r.get("vehicle_type") == "CTrain"]
-    buses = [r for r in routes if r.get("vehicle_type") == "Bus"]
-
-    return {
-        "total": len(routes),
-        "ctrain": {
-            "count": len(ctrains),
-            "routes": ctrains,
-        },
-        "bus": {
-            "count": len(buses),
-            "routes": sorted(buses, key=lambda r: r.get("route_short_name", "")),
-        },
-    }
 
 
-@app.get("/routes/{route_id}")
-async def route_detail(route_id: str):
-    """Get details for a specific route"""
-    route = get_route(route_id)
-    if not route:
-        raise HTTPException(status_code=404, detail=f"Route {route_id} not found")
-
-    # Get schedule/arrivals
-    schedule = await get_route_schedule(route_id)
-
-    return {
-        "route": route,
-        **schedule,
-    }
 
 
 @app.get("/routes/{route_id}/shape")
@@ -538,15 +460,6 @@ async def lrt_tracks(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/lrt/arrivals")
-async def lrt_arrivals(
-    line: Optional[str] = Query(None, description="RED or BLUE"),
-):
-    """Get all CTrain arrivals across the network"""
-    try:
-        return await get_all_ctrain_arrivals(line)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================
@@ -565,31 +478,8 @@ async def health():
     }
 
 
-@app.get("/stats")
-async def stats():
-    """Cache and system statistics"""
-    return get_cache_stats()
 
 
-# ============================================
-# Legacy Endpoints (for backwards compatibility)
-# ============================================
-
-
-@app.get("/ctrains")
-async def legacy_ctrains(
-    line: Optional[str] = Query(None, description="RED or BLUE"),
-):
-    """Legacy endpoint - use /vehicles/ctrains instead"""
-    return await get_ctrains(line=line)
-
-
-@app.get("/buses")
-async def legacy_buses(
-    route_id: Optional[str] = Query(None),
-):
-    """Legacy endpoint - use /vehicles/buses instead"""
-    return await get_buses(route=route_id)
 
 
 if __name__ == "__main__":
