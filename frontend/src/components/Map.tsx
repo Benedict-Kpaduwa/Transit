@@ -23,6 +23,7 @@ import MapControls from "@/components/map/map-controls";
 import VehicleLayer, {
   type VehiclePositionData,
 } from "@/components/map/vehicle-layer";
+import Vehicle3DLayer from "@/components/map/Vehicle3DLayer";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 import { useTheme } from "@/stores/use-theme-store";
 import { useMapStore } from "@/stores/useMapStore";
@@ -863,6 +864,13 @@ const Map = ({
     }
   }, [trackedVehicle, allVehicles, showLiveTrains, showTrainLines]);
 
+  // Clear route shape when tracked vehicle changes (switching to different vehicle)
+  useEffect(() => {
+    // When tracked vehicle changes, clear any previously viewed route
+    // This prevents old route lines from lingering when switching vehicles
+    setViewedRouteShape(null);
+  }, [trackedVehicle?.tripId, trackedVehicle?.vehicleId]);
+
   // Continuously follow tracked vehicle
   useEffect(() => {
     if (!trackedVehicle || !mapRef.current) return;
@@ -885,6 +893,9 @@ const Map = ({
   const stopTracking = useCallback(() => {
     // Clear tracked vehicle
     setTrackedVehicle(null);
+    
+    // Clear viewed route shape
+    setViewedRouteShape(null);
     
     // Hide train lines (reset to default)
     setShowTrainLines(false);
@@ -1686,12 +1697,21 @@ const Map = ({
         <div ref={mapContainerRef} className="w-full h-full" />
 
         {/* Vehicle Markers - Render when live trains/buses is enabled OR when tracking any vehicle */}
+        {/* Vehicle Markers - Render when live trains/buses is enabled OR when tracking any vehicle */}
         {mapLoaded && (showLiveTrains || showLiveBuses || trackedVehicle) && (
           <VehicleLayer
             map={mapInstance}
             vehicles={allVehicles}
             onViewRoute={handleViewRoute}
             trackedVehicleId={trackedVehicle?.tripId || trackedVehicle?.vehicleId || null}
+          />
+        )}
+
+        {/* 3D Vehicle Models Layer */}
+        {mapLoaded && (showLiveTrains || showLiveBuses || trackedVehicle) && (
+          <Vehicle3DLayer
+            map={mapInstance}
+            vehicles={allVehicles}
           />
         )}
 

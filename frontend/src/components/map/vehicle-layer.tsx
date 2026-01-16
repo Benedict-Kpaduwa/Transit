@@ -145,307 +145,105 @@ function createVehicleMarkerElement(
   return el;
 }
 
-// ============================================
-// Singleton 3D Renderer - Uses single WebGL context to prevent context exhaustion
-// ============================================
 
-interface Model3DInstance {
-  canvasId: string;
-  vehicleType: "CTrain" | "Bus";
-  bearing: number; // Vehicle heading direction in degrees (0 = north, clockwise)
-}
-
-// Singleton state for 3D rendering
-let sharedRenderer: {
-  initialized: boolean;
-  animationId: number | null;
-  offscreenCanvas: HTMLCanvasElement | null;
-  renderer: any; // THREE.WebGLRenderer
-  scene: any; // THREE.Scene
-  camera: any; // THREE.PerspectiveCamera
-  trainModel: any; // THREE.Group
-  busModel: any; // THREE.Group
-  activeCanvases: Map<string, Model3DInstance>;
-} = {
-  initialized: false,
-  animationId: null,
-  offscreenCanvas: null,
-  renderer: null,
-  scene: null,
-  camera: null,
-  trainModel: null,
-  busModel: null,
-  activeCanvases: new Map(),
-};
-
-// Initialize the shared 3D renderer (called once)
-async function initShared3DRenderer() {
-  if (sharedRenderer.initialized) return;
-  sharedRenderer.initialized = true;
-
-  const THREE = await import('three');
-  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
-
-  // Create offscreen canvas for rendering (larger for better visibility)
-  const offscreenCanvas = document.createElement('canvas');
-  offscreenCanvas.width = 200; // Larger canvas for more detail
-  offscreenCanvas.height = 200;
-  sharedRenderer.offscreenCanvas = offscreenCanvas;
-
-  // Create scene
-  const scene = new THREE.Scene();
-  scene.background = null;
-  sharedRenderer.scene = scene;
-
-  // Create camera - top-down angled view (like Uber's birds-eye perspective)
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 1000);
-  // Position camera above and slightly behind for a 3D top-down view
-  camera.position.set(0, 3, 1.5);
-  camera.lookAt(0, 0, 0);
-  sharedRenderer.camera = camera;
-
-  // Create renderer with offscreen canvas
-  const renderer = new THREE.WebGLRenderer({
-    canvas: offscreenCanvas,
-    alpha: true,
-    antialias: true,
-    powerPreference: 'low-power', // Prefer integrated GPU to save resources
-  });
-  renderer.setSize(200, 200);
-  renderer.setPixelRatio(1);
-  sharedRenderer.renderer = renderer;
-
-  // Add lights
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-  scene.add(ambientLight);
-
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-  directionalLight.position.set(5, 5, 5);
-  scene.add(directionalLight);
-
-  // Load both models
-  const loader = new GLTFLoader();
-
-  // Load train model
-  loader.load('/models/train.glb', (gltf) => {
-    const model = gltf.scene;
-    centerAndScaleModel(THREE, model);
-    model.visible = false; // Initially hidden
-    scene.add(model);
-    sharedRenderer.trainModel = model;
-    console.log('Train model loaded for singleton renderer');
-  }, undefined, (error) => {
-    console.error('Error loading train model:', error);
-  });
-
-  // Load bus model
-  loader.load('/models/bus.glb', (gltf) => {
-    const model = gltf.scene;
-    centerAndScaleModel(THREE, model);
-    model.visible = false; // Initially hidden
-    scene.add(model);
-    sharedRenderer.busModel = model;
-    console.log('Bus model loaded for singleton renderer');
-  }, undefined, (error) => {
-    console.error('Error loading bus model:', error);
-  });
-
-  // Start animation loop
-  startSharedAnimationLoop();
-}
-
-// Center and scale a model to fit in the viewport (larger scale for visibility)
-function centerAndScaleModel(THREE: any, model: any) {
-  const box = new THREE.Box3().setFromObject(model);
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-  const maxDim = Math.max(size.x, size.y, size.z);
-  const scale = 2.2 / maxDim; // Increased from 1.5 to 2.2 for better visibility
-
-  model.scale.setScalar(scale);
-  model.position.sub(center.multiplyScalar(scale));
-}
-
-// Shared animation loop - renders to offscreen canvas then copies to all active marker canvases
-function startSharedAnimationLoop() {
-  const animate = () => {
-    sharedRenderer.animationId = requestAnimationFrame(animate);
-
-    if (!sharedRenderer.renderer || !sharedRenderer.scene || !sharedRenderer.camera) return;
-
-    // For each active canvas, render the appropriate model and copy
-    sharedRenderer.activeCanvases.forEach((instance, canvasId) => {
-      const targetCanvas = document.getElementById(canvasId) as HTMLCanvasElement;
-      if (!targetCanvas) {
-        // Canvas no longer exists, remove from active list
-        sharedRenderer.activeCanvases.delete(canvasId);
-        return;
-      }
-
-      const model = instance.vehicleType === 'CTrain' 
-        ? sharedRenderer.trainModel 
-        : sharedRenderer.busModel;
-
-      if (!model) return;
-
-      // Show only this model
-      if (sharedRenderer.trainModel) sharedRenderer.trainModel.visible = false;
-      if (sharedRenderer.busModel) sharedRenderer.busModel.visible = false;
-      model.visible = true;
-
-      // Orient model based on vehicle bearing (like Uber car alignment)
-      // Bearing: 0° = North, 90° = East, 180° = South, 270° = West
-      // Three.js Y rotation: 0 = facing +Z, counter-clockwise positive
-      // Convert bearing to Three.js rotation: negate and offset by 180°
-      const bearingRad = ((180 - instance.bearing) * Math.PI) / 180;
-      model.rotation.y = bearingRad;
-
-      // Render to offscreen canvas
-      sharedRenderer.renderer!.render(sharedRenderer.scene!, sharedRenderer.camera!);
-
-      // Copy to target canvas
-      const ctx = targetCanvas.getContext('2d');
-      if (ctx && sharedRenderer.offscreenCanvas) {
-        ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
-        ctx.drawImage(sharedRenderer.offscreenCanvas, 0, 0, targetCanvas.width, targetCanvas.height);
-      }
-    });
-
-    // If no active canvases, hide all models but keep loop running
-    if (sharedRenderer.activeCanvases.size === 0) {
-      if (sharedRenderer.trainModel) sharedRenderer.trainModel.visible = false;
-      if (sharedRenderer.busModel) sharedRenderer.busModel.visible = false;
-    }
-  };
-
-  animate();
-}
-
-// Register a canvas to receive 3D model renders
-function register3DModelCanvas(canvasId: string, vehicleType: "CTrain" | "Bus", bearing: number = 0) {
-  sharedRenderer.activeCanvases.set(canvasId, { canvasId, vehicleType, bearing });
-  
-  // Initialize renderer if not already done
-  initShared3DRenderer();
-}
-
-// Update the bearing for a registered canvas (called when vehicle moves)
-function update3DModelBearing(canvasId: string, bearing: number) {
-  const instance = sharedRenderer.activeCanvases.get(canvasId);
-  if (instance) {
-    instance.bearing = bearing;
-  }
-}
-
-// Unregister a canvas (cleanup)
-function unregister3DModelCanvas(canvasId: string) {
-  sharedRenderer.activeCanvases.delete(canvasId);
-}
-
-// Create 3D model-based marker for tracked vehicles using singleton renderer
+// Create floating label for tracked vehicles (3D model provided by Vehicle3DLayer)
 function create3DModelMarkerElement(
   vehicleType: "CTrain" | "Bus",
   color: string,
   routeShortName?: string,
-  bearing: number = 0
+  _bearing: number = 0
 ): HTMLDivElement {
   const el = document.createElement("div");
   el.className = "vehicle-marker vehicle-marker-3d";
 
-  const canvasId = `model-canvas-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
-  // Store canvasId on element for later bearing updates
-  el.setAttribute('data-canvas-id', canvasId);
-
+  // Floating label centered directly above the 3D model with pulse ring
   el.innerHTML = `
-    <div class="vehicle-marker-container" style="
+    <div style="
+      position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
       cursor: pointer;
-      transform: translateX(-50%) translateY(-50%);
     ">
-      <!-- Route label with "TRACKING" badge - NOW ON TOP -->
+      <!-- Labels positioned above -->
       <div style="
-        margin-bottom: 4px;
+        position: absolute;
+        bottom: 60px;
+        left: 50%;
+        transform: translateX(-50%);
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 2px;
+        gap: 4px;
       ">
         <div style="
-          padding: 3px 10px;
+          padding: 4px 12px;
           background: linear-gradient(135deg, ${color} 0%, ${color}dd 100%);
           color: white;
-          font-size: 12px;
+          font-size: 13px;
           font-weight: 700;
-          border-radius: 6px;
+          border-radius: 8px;
           white-space: nowrap;
-          box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.4);
           letter-spacing: 0.3px;
         ">
           ${routeShortName || (vehicleType === "CTrain" ? "CTrain" : "Bus")}
         </div>
         <div style="
-          padding: 2px 8px;
+          padding: 3px 10px;
           background: linear-gradient(135deg, rgba(34, 197, 94, 0.95) 0%, rgba(22, 163, 74, 0.95) 100%);
           color: white;
-          font-size: 9px;
+          font-size: 10px;
           font-weight: 600;
-          border-radius: 4px;
+          border-radius: 6px;
           text-transform: uppercase;
           letter-spacing: 0.5px;
-          box-shadow: 0 2px 6px rgba(34, 197, 94, 0.4);
+          box-shadow: 0 3px 8px rgba(34, 197, 94, 0.4);
           animation: tracking-blink 1s ease-in-out infinite;
           display: flex;
           align-items: center;
-          gap: 3px;
+          gap: 4px;
         ">
-          <span style="font-size: 10px;">📍</span> Tracking
+          <span style="font-size: 11px;">📍</span> Tracking
         </div>
+        <!-- Arrow pointing down -->
+        <div style="
+          width: 0;
+          height: 0;
+          border-left: 8px solid transparent;
+          border-right: 8px solid transparent;
+          border-top: 10px solid rgba(34, 197, 94, 0.95);
+        "></div>
       </div>
       
-      <!-- 3D Model Container -->
+      <!-- Pulse ring around the vehicle position -->
       <div style="
-        position: relative;
         width: 80px;
         height: 80px;
+        position: relative;
         display: flex;
         align-items: center;
         justify-content: center;
       ">
-        <!-- Outer pulse ring -->
         <div style="
           position: absolute;
-          width: 75px;
-          height: 75px;
+          width: 70px;
+          height: 70px;
           border-radius: 50%;
-          background: radial-gradient(circle, ${color}50 0%, ${color}20 50%, transparent 70%);
+          background: radial-gradient(circle, ${color}40 0%, ${color}20 40%, transparent 70%);
           animation: tracked-pulse 1.5s ease-in-out infinite;
         "></div>
-        
-        <!-- 3D Model Canvas -->
-        <canvas 
-          id="${canvasId}" 
-          data-vehicle-type="${vehicleType}"
-          width="200" 
-          height="200" 
-          style="
-            width: 60px;
-            height: 60px;
-            background: transparent;
-            border-radius: 50%;
-            box-shadow: 0 0 20px ${color}60, 0 0 40px ${color}30;
-          "
-        ></canvas>
+        <div style="
+          position: absolute;
+          width: 50px;
+          height: 50px;
+          border-radius: 50%;
+          border: 3px solid ${color}80;
+          animation: tracked-pulse 1.5s ease-in-out infinite 0.3s;
+        "></div>
       </div>
     </div>
   `;
-
-  // Register canvas with singleton renderer after element is added to DOM
-  setTimeout(() => {
-    register3DModelCanvas(canvasId, vehicleType, bearing);
-  }, 50);
 
   return el;
 }
@@ -926,14 +724,6 @@ export default function VehicleLayer({
             vehicle.lat,
             vehicle.bearing || 0
           );
-          
-          // Update 3D model bearing if this is a tracked vehicle
-          if (isTracked) {
-            const canvasId = existingEl.getAttribute('data-canvas-id');
-            if (canvasId) {
-              update3DModelBearing(canvasId, vehicle.bearing || 0);
-            }
-          }
         }
       }
     });
