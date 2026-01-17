@@ -1189,7 +1189,14 @@ const Map = ({
         // First check if backend provided geometry
         if (segment.geometry?.coordinates) {
           // Use backend-provided geometry (works for both CTrain and Bus)
-          routeCoordinates = segment.geometry.coordinates as [number, number][];
+          routeCoordinates = [...segment.geometry.coordinates] as [number, number][];
+          
+          // CRITICAL: Force endpoints to match segment from/to coordinates
+          // This ensures the line ends exactly at the station markers
+          if (routeCoordinates.length >= 2) {
+            routeCoordinates[0] = fromCoords;
+            routeCoordinates[routeCoordinates.length - 1] = toCoords;
+          }
         } else if (segment.vehicle_type === "CTrain") {
           // Fallback: Extract CTrain segment from local track data
           routeCoordinates = getTrackSegment(

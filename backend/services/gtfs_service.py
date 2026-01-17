@@ -749,6 +749,120 @@ def get_route_shape(route_id: str, direction_id: Optional[int] = None) -> Option
     }
 
 
+def get_route_shape_segment(
+    route_name: str, 
+    start_lat: float, 
+    start_lon: float, 
+    end_lat: float, 
+    end_lon: float
+) -> Optional[Dict]:
+    """
+    Get the route geometry between two points (typically stops).
+    Uses GTFS shapes and finds the closest points on the route.
+    
+    This is the key to drawing accurate road-following lines like Google Maps.
+    Tries both directions and picks the one that gives a valid segment.
+    """
+    if not _gtfs_cache["loaded"]:
+        return None
+    
+    # Handle CTrain aliases
+    lookup_name = route_name
+    if route_name.lower() == "red":
+        lookup_name = "201"
+    elif route_name.lower() == "blue":
+        lookup_name = "202"
+    
+    # Get route
+    route = _gtfs_cache["route_by_id"].get(str(lookup_name))
+    if not route:
+        route = _gtfs_cache["route_by_short_name"].get(str(lookup_name))
+    if not route:
+        return None
+    
+    actual_route_id = route.get("route_id")
+    trips = _gtfs_cache["trips_by_route"].get(actual_route_id, [])
+    if not trips:
+        return None
+    
+    # Get ALL unique shape IDs for this route (both directions)
+    shape_ids = set()
+    for trip_id in trips:
+        trip = _gtfs_cache["trip_by_id"].get(trip_id, {})
+        shape_id = trip.get("shape_id")
+        if shape_id:
+            shape_ids.add(shape_id)
+    
+    if not shape_ids:
+        return None
+    
+    shapes_df = _gtfs_cache.get("shapes")
+    if shapes_df is None:
+        return None
+    
+    def find_closest_index(coords, lat, lon):
+        best_idx = 0
+        min_dist = float("inf")
+        for i, (lng, lt) in enumerate(coords):
+            dist = (lt - lat) ** 2 + (lng - lon) ** 2
+            if dist < min_dist:
+                min_dist = dist
+                best_idx = i
+        return best_idx, min_dist
+    
+    best_segment = None
+    best_length = 0
+    
+    # Try each shape (covers both directions)
+    for shape_id in shape_ids:
+        shape_points = shapes_df[shapes_df["shape_id"] == shape_id].sort_values("shape_pt_sequence")
+        if shape_points.empty:
+            shape_points = shapes_df[shapes_df["shape_id"].astype(str) == str(shape_id)].sort_values("shape_pt_sequence")
+        if shape_points.empty:
+            continue
+        
+        full_coords = [[float(row["shape_pt_lon"]), float(row["shape_pt_lat"])] for _, row in shape_points.iterrows()]
+        if len(full_coords) < 2:
+            continue
+        
+        start_idx, start_dist = find_closest_index(full_coords, start_lat, start_lon)
+        end_idx, end_dist = find_closest_index(full_coords, end_lat, end_lon)
+        
+        # Swap if needed to get correct order along the shape
+        if start_idx > end_idx:
+            start_idx, end_idx = end_idx, start_idx
+        
+        segment_coords = full_coords[start_idx : end_idx + 1]
+        
+        # Pick the longest valid segment (more points = better coverage)
+        if len(segment_coords) > best_length:
+            best_length = len(segment_coords)
+            best_segment = segment_coords
+    
+    if best_segment and len(best_segment) >= 2:
+        # IMPORTANT: Ensure the line connects to the actual start and end points
+        # Prepend start point if not already close
+        first_coord = best_segment[0]
+        if abs(first_coord[1] - start_lat) > 0.0005 or abs(first_coord[0] - start_lon) > 0.0005:
+            best_segment.insert(0, [start_lon, start_lat])
+        
+        # Append end point if not already close
+        last_coord = best_segment[-1]
+        if abs(last_coord[1] - end_lat) > 0.0005 or abs(last_coord[0] - end_lon) > 0.0005:
+            best_segment.append([end_lon, end_lat])
+        
+        return {
+            "type": "LineString",
+            "coordinates": best_segment
+        }
+    
+    # Last resort fallback
+    return {
+        "type": "LineString",
+        "coordinates": [[start_lon, start_lat], [end_lon, end_lat]]
+    }
+
+
 def get_cache_stats() -> Dict:
     """Get cache statistics"""
     return {
