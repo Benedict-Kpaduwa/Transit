@@ -21,7 +21,7 @@ from services.gtfs_service import (
     get_route_shape_segment,
 )
 from services.trip_planner import get_ctrain_track_geometry
-from services.google_directions import get_google_transit_segment_geometry
+from services.google_directions import get_google_transit_segment_geometry, get_google_walking_directions, get_google_driving_directions
 
 # Transit API Configuration
 TRANSIT_API_BASE_URL = "https://external.transitapp.com/v3/public"
@@ -165,6 +165,31 @@ async def transform_transit_api_response(
             from_coords = leg_coords[0] if leg_coords else last_coords
             to_coords = leg_coords[-1] if leg_coords else [dest_lng, dest_lat]
             
+            # Get walking geometry - Priority: Google Walking Directions, then Transit API
+            walk_geometry = None
+            
+            # Priority 1: Google Walking Directions
+            if from_coords and to_coords:
+                try:
+                    google_walk = await get_google_walking_directions(
+                        from_coords[1], from_coords[0],  # lat, lon
+                        to_coords[1], to_coords[0]
+                    )
+                    if google_walk and google_walk.get("geometry"):
+                        walk_geometry = google_walk["geometry"]
+                        print(f"✅ Google walking geometry: {len(walk_geometry.get('coordinates', []))} pts")
+                except Exception as e:
+                    print(f"⚠️ Google Walking failed: {e}")
+            
+            # Priority 2: Transit API polyline (fallback)
+            if not walk_geometry and leg_coords and len(leg_coords) > 1:
+                walk_geometry = {"type": "LineString", "coordinates": leg_coords}
+                print(f"✅ Transit API walking polyline: {len(leg_coords)} pts")
+            
+            # Priority 3: Straight line (last resort)
+            if not walk_geometry and from_coords and to_coords:
+                walk_geometry = {"type": "LineString", "coordinates": [from_coords, to_coords]}
+            
             segments.append({
                 "type": "walk",
                 "instruction": "Walk",
@@ -178,12 +203,12 @@ async def transform_transit_api_response(
                 },
                 "distance": int(distance),
                 "duration": leg.get("duration", 0),
-                "geometry": {"type": "LineString", "coordinates": leg_coords} if leg_coords else None,
+                "geometry": walk_geometry,
             })
             
             # Update last known coordinates
-            if leg_coords:
-                last_coords = leg_coords[-1]
+            if to_coords:
+                last_coords = to_coords
                     
         elif leg_mode == "transit":
             # Get route info from the routes field
@@ -276,34 +301,59 @@ async def transform_transit_api_response(
                 end_lon = to_coords[0] if to_coords else None
                 
                 # PRIORITY ORDER:
-                # 1. Google Directions API (for ALL transit - CTrain and Bus)
-                # 2. Transit API polyline (fallback)
-                # 3. GTFS shapes (last resort)
+                # CTrain: Google Transit API (for accurate headsigns)
+                # Bus: Google Driving API (to follow roads accurately)
+                # Fallbacks: Transit API polyline, then GTFS shapes
                 
                 google_headsign = None
                 
-                # Priority 1: Google Directions API (for ALL transit)
-                if start_lat and start_lon and end_lat and end_lon:
-                    try:
-                        google_result = await get_google_transit_segment_geometry(
-                            start_lat, start_lon, end_lat, end_lon
-                        )
-                        if google_result and google_result.get("geometry"):
-                            transit_geometry = google_result["geometry"]
-                            google_headsign = google_result.get("transit_headsign")
-                            coords = transit_geometry.get('coordinates', [])
-                            print(f"✅ Google geometry for {route_short_name}: {len(coords)} pts")
-                            if google_headsign:
-                                print(f"   🎯 Google headsign: {google_headsign}")
-                    except Exception as e:
-                        print(f"⚠️ Google Directions failed: {e}")
+                if vehicle_type == "CTrain":
+                    # CTrain: Use Google Transit for geometry and headsign
+                    if start_lat and start_lon and end_lat and end_lon:
+                        try:
+                            google_result = await get_google_transit_segment_geometry(
+                                start_lat, start_lon, end_lat, end_lon
+                            )
+                            if google_result and google_result.get("geometry"):
+                                transit_geometry = google_result["geometry"]
+                                google_headsign = google_result.get("transit_headsign")
+                                coords = transit_geometry.get('coordinates', [])
+                                print(f"✅ Google transit geometry for {route_short_name}: {len(coords)} pts")
+                                if google_headsign:
+                                    print(f"   🎯 Google headsign: {google_headsign}")
+                        except Exception as e:
+                            print(f"⚠️ Google Transit failed: {e}")
+                else:
+                    # Bus: Use Google Driving for road-accurate geometry
+                    if start_lat and start_lon and end_lat and end_lon:
+                        try:
+                            driving_result = await get_google_driving_directions(
+                                start_lat, start_lon, end_lat, end_lon
+                            )
+                            if driving_result and driving_result.get("geometry"):
+                                transit_geometry = driving_result["geometry"]
+                                coords = transit_geometry.get('coordinates', [])
+                                print(f"✅ Google driving geometry for bus {route_short_name}: {len(coords)} pts")
+                        except Exception as e:
+                            print(f"⚠️ Google Driving failed: {e}")
+                    
+                    # Also get headsign from Google Transit
+                    if start_lat and start_lon and end_lat and end_lon and not google_headsign:
+                        try:
+                            google_result = await get_google_transit_segment_geometry(
+                                start_lat, start_lon, end_lat, end_lon
+                            )
+                            if google_result:
+                                google_headsign = google_result.get("transit_headsign")
+                        except Exception:
+                            pass
                 
-                # Priority 2: Transit API polyline
+                # Priority 2: Transit API polyline (fallback)
                 if not transit_geometry and leg_coords and len(leg_coords) > 2:
                     transit_geometry = {"type": "LineString", "coordinates": leg_coords}
                     print(f"✅ Transit API polyline for {route_short_name}: {len(leg_coords)} pts")
                 
-                # Priority 3: GTFS shapes
+                # Priority 3: GTFS shapes (last resort)
                 if not transit_geometry and route_short_name and start_lat and start_lon and end_lat and end_lon:
                     gtfs_shape = get_route_shape_segment(
                         route_short_name, start_lat, start_lon, end_lat, end_lon

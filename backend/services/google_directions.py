@@ -211,3 +211,145 @@ async def get_google_transit_segment_geometry(
         }
     
     return None
+
+
+async def get_google_walking_directions(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float
+) -> Optional[Dict]:
+    """
+    Get walking directions geometry from Google Directions API.
+    Returns dict with geometry (LineString).
+    """
+    if not settings.google_api_key:
+        return None
+    
+    origin = f"{start_lat},{start_lon}"
+    destination = f"{end_lat},{end_lon}"
+    
+    url = "https://maps.googleapis.com/maps/api/directions/json"
+    params = {
+        "origin": origin,
+        "destination": destination,
+        "mode": "walking",
+        "key": settings.google_api_key,
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params=params)
+            data = response.json()
+            
+            if data.get("status") != "OK":
+                return None
+            
+            routes = data.get("routes", [])
+            if not routes:
+                return None
+            
+            route = routes[0]
+            legs = route.get("legs", [])
+            
+            # Get detailed walking path
+            coordinates = []
+            for leg in legs:
+                for step in leg.get("steps", []):
+                    step_polyline = step.get("polyline", {}).get("points", "")
+                    step_coords = decode_google_polyline(step_polyline)
+                    coordinates.extend(step_coords)
+            
+            if not coordinates:
+                # Fallback to overview polyline
+                overview = route.get("overview_polyline", {}).get("points", "")
+                coordinates = decode_google_polyline(overview)
+            
+            if not coordinates:
+                return None
+            
+            return {
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": coordinates
+                },
+                "distance": legs[0].get("distance", {}).get("value", 0) if legs else 0,
+                "duration": legs[0].get("duration", {}).get("value", 0) if legs else 0,
+            }
+            
+    except Exception as e:
+        print(f"⚠️ Google Walking Directions failed: {e}")
+        return None
+
+
+async def get_google_driving_directions(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float
+) -> Optional[Dict]:
+    """
+    Get driving directions geometry from Google Directions API.
+    Used for buses since they follow roads.
+    Returns dict with geometry (LineString).
+    """
+    if not settings.google_api_key:
+        return None
+    
+    origin = f"{start_lat},{start_lon}"
+    destination = f"{end_lat},{end_lon}"
+    
+    url = "https://maps.googleapis.com/maps/api/directions/json"
+    params = {
+        "origin": origin,
+        "destination": destination,
+        "mode": "driving",
+        "key": settings.google_api_key,
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params=params)
+            data = response.json()
+            
+            if data.get("status") != "OK":
+                print(f"⚠️ Google Driving status: {data.get('status')}")
+                return None
+            
+            routes = data.get("routes", [])
+            if not routes:
+                return None
+            
+            route = routes[0]
+            legs = route.get("legs", [])
+            
+            # Get detailed driving path
+            coordinates = []
+            for leg in legs:
+                for step in leg.get("steps", []):
+                    step_polyline = step.get("polyline", {}).get("points", "")
+                    step_coords = decode_google_polyline(step_polyline)
+                    coordinates.extend(step_coords)
+            
+            if not coordinates:
+                # Fallback to overview polyline
+                overview = route.get("overview_polyline", {}).get("points", "")
+                coordinates = decode_google_polyline(overview)
+            
+            if not coordinates:
+                return None
+            
+            print(f"✅ Google driving geometry: {len(coordinates)} pts")
+            
+            return {
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": coordinates
+                },
+                "distance": legs[0].get("distance", {}).get("value", 0) if legs else 0,
+                "duration": legs[0].get("duration", {}).get("value", 0) if legs else 0,
+            }
+            
+    except Exception as e:
+        print(f"⚠️ Google Driving Directions failed: {e}")
+        return None
