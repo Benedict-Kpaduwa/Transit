@@ -20,7 +20,7 @@ from services.gtfs_service import (
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate distance between two points in meters"""
-    R = 6371000  # Earth radius in meters
+    R = 6371000
 
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
