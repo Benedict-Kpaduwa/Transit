@@ -59,7 +59,6 @@ async def get_stop_arrivals(
     if not stop_info:
         return {"error": f"Stop {stop_id} not found", "arrivals": []}
 
-    # Get real-time arrivals
     arrivals = await get_realtime_arrivals(stop_id)
 
     # Apply filters
