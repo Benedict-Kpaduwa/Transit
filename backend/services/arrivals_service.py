@@ -67,7 +67,6 @@ async def get_stop_arrivals(
     if vehicle_type_filter:
         arrivals = [a for a in arrivals if a.get("vehicle_type") == vehicle_type_filter]
 
-    # Get routes serving this stop (for context)
     routes = get_routes_serving_stop(stop_id)
 
     # Format response
