@@ -69,7 +69,6 @@ async def get_stop_arrivals(
 
     routes = get_routes_serving_stop(stop_id)
 
-    # Format response
     return {
         "stop": {
             "stop_id": stop_info.get("stop_id"),
