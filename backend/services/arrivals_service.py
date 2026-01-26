@@ -61,7 +61,6 @@ async def get_stop_arrivals(
 
     arrivals = await get_realtime_arrivals(stop_id)
 
-    # Apply filters
     if route_filter:
         arrivals = [a for a in arrivals if a.get("route_short_name") == route_filter]
     if vehicle_type_filter:
