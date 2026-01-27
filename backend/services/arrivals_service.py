@@ -189,7 +189,7 @@ async def get_nearby_stops_with_arrivals(
                         "vehicle_type": r.get("vehicle_type"),
                         "color": r.get("color"),
                     }
-                    for r in routes[:5]  # Limit routes shown
+                    for r in routes[:5]
                 ],
                 "arrivals": arrivals[:limit_arrivals_per_stop],
             }
