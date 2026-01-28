@@ -227,7 +227,6 @@ async def get_station_arrivals(
     matching_stops = []
     station_name_lower = station_name.lower()
     
-    # Remove common suffixes for more flexible matching
     search_terms = [station_name_lower]
     for suffix in [" station", " ctrain station", " lrt station", " stn"]:
         if station_name_lower.endswith(suffix):
