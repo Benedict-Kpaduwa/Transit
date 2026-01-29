@@ -223,7 +223,6 @@ async def get_station_arrivals(
     """
     all_stops = get_all_stops()
 
-    # Find matching stations
     matching_stops = []
     station_name_lower = station_name.lower()
     
