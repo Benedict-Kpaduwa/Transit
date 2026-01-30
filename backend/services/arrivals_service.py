@@ -231,7 +231,6 @@ async def get_station_arrivals(
         if station_name_lower.endswith(suffix):
             cleaned = station_name_lower[:-len(suffix)]
             search_terms.append(cleaned)
-            # Also split by slashes for compound names like "SAIT/ACAD/Jubilee"
             parts = [p.strip() for p in cleaned.replace("/", " / ").split()]
             for part in parts:
                 if len(part) >= 3 and part != "/":  # Only add meaningful parts
