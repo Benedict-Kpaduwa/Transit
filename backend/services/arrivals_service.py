@@ -233,10 +233,9 @@ async def get_station_arrivals(
             search_terms.append(cleaned)
             parts = [p.strip() for p in cleaned.replace("/", " / ").split()]
             for part in parts:
-                if len(part) >= 3 and part != "/":  # Only add meaningful parts
+                if len(part) >= 3 and part != "/":
                     search_terms.append(part)
     
-    # Make search terms unique
     search_terms = list(set(search_terms))
     
     for stop in all_stops:
