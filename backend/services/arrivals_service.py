@@ -120,7 +120,6 @@ async def get_nearby_stops_with_arrivals(
     """
     all_stops = get_all_stops()
 
-    # Calculate distances and filter
     stops_with_distance = []
     for stop in all_stops:
         distance = haversine_distance(
