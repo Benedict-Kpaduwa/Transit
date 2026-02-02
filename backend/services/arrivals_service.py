@@ -239,7 +239,6 @@ async def get_station_arrivals(
     
     for stop in all_stops:
         stop_name = stop.get("stop_name", "").lower()
-        # Match LRT stations
         for search_term in search_terms:
             if search_term in stop_name:
                 matching_stops.append(stop)
