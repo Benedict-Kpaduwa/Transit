@@ -134,10 +134,7 @@ async def get_nearby_stops_with_arrivals(
                 }
             )
 
-    # Sort by distance
     stops_with_distance.sort(key=lambda x: x["distance_meters"])
-
-    # Get arrivals for each stop
     nearby_stops = []
     stops_checked = 0
     # When filtering by vehicle type, check more stops since many might not match
