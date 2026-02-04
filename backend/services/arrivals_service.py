@@ -137,7 +137,6 @@ async def get_nearby_stops_with_arrivals(
     stops_with_distance.sort(key=lambda x: x["distance_meters"])
     nearby_stops = []
     stops_checked = 0
-    # When filtering by vehicle type, check more stops since many might not match
     max_stops_to_check = limit_stops * 20 if vehicle_type_filter else limit_stops * 4
 
     for stop in stops_with_distance:
@@ -147,7 +146,6 @@ async def get_nearby_stops_with_arrivals(
         stops_checked += 1
         stop_id = stop.get("stop_id")
 
-        # Get routes serving this stop to check vehicle type
         routes = get_routes_serving_stop(stop_id)
 
         # If filtering by vehicle type, check if this stop has matching routes
