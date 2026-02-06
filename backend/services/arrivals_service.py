@@ -148,7 +148,6 @@ async def get_nearby_stops_with_arrivals(
 
         routes = get_routes_serving_stop(stop_id)
 
-        # If filtering by vehicle type, check if this stop has matching routes
         if vehicle_type_filter:
             matching_routes = [
                 r for r in routes if r.get("vehicle_type") == vehicle_type_filter
