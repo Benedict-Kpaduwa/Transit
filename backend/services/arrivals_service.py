@@ -153,12 +153,10 @@ async def get_nearby_stops_with_arrivals(
                 r for r in routes if r.get("vehicle_type") == vehicle_type_filter
             ]
             if not matching_routes:
-                continue  # Skip this stop if no matching routes
-            routes = matching_routes  # Only show matching routes
-
+                continue
+            routes = matching_routes
         arrivals = await get_realtime_arrivals(stop_id)
 
-        # Apply arrival filter
         if vehicle_type_filter:
             arrivals = [
                 a for a in arrivals if a.get("vehicle_type") == vehicle_type_filter
