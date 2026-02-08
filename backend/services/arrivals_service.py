@@ -239,15 +239,11 @@ async def get_station_arrivals(
     if not matching_stops:
         return {"error": f"Station '{station_name}' not found", "arrivals": []}
 
-    # Get arrivals for all matching stops (some stations have multiple platforms)
     all_arrivals = []
     for stop in matching_stops:
         arrivals = await get_realtime_arrivals(stop.get("stop_id"))
 
-        # Filter for CTrain only
         arrivals = [a for a in arrivals if a.get("vehicle_type") == "CTrain"]
-
-        # Apply line filter
         if line:
             line_lower = line.lower()
             arrivals = [
