@@ -1,0 +1,8 @@
+frontend/node_modules/
+backend/venv/
+backend/__pycache__/
+backend/.env
+backend/gtfs_data/
+.git/
+.trunk/
+*.md
