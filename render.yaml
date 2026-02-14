@@ -7,7 +7,7 @@ services:
   - type: web
     name: calgary-transit-api
     runtime: docker
-    repo: https://github.com/YOUR_USERNAME/calgary-transit
+    repo: https://github.com/Benedict-Kpaduwa/Transit
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     plan: free
@@ -26,7 +26,7 @@ services:
   - type: web
     name: calgary-transit
     runtime: static
-    repo: https://github.com/YOUR_USERNAME/calgary-transit
+    repo: https://github.com/Benedict-Kpaduwa/Transit
     buildCommand: cd frontend && pnpm install && pnpm run build
     staticPublishPath: ./frontend/dist
     headers:
