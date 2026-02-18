@@ -66,13 +66,14 @@ async def startup():
         """Load GTFS data in background so server starts immediately"""
         try:
             await download_static_gtfs()
-            load_gtfs_static()
+            await asyncio.to_thread(load_gtfs_static)
             print("✅ GTFS data loaded!")
         except Exception as e:
             print(f"❌ GTFS loading error: {e}")
 
     asyncio.create_task(load_gtfs_background())
     print("✅ API started! GTFS data loading in background...")
+
 
 
 @app.get("/")
