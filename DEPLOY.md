@@ -1,83 +1,92 @@
-# Deploying Calgary Transit on DigitalOcean App Platform
+# Deploying Calgary Transit on DigitalOcean
+
+## Architecture
+
+Single Docker container running **Nginx** (port 8080) + **FastAPI/Uvicorn** (port 8000), managed by **supervisord**.
+
+- Nginx serves the frontend static files and proxies `/api/*` → FastAPI
+- GitHub Actions CI/CD auto-deploys on push to `main`
 
 ## Prerequisites
 
-- A [DigitalOcean](https://cloud.digitalocean.com/) account
-- Your GitHub repo pushed to **Benedict-Kpaduwa/Transit**
-- API keys ready (see `.env.example` files)
+- [DigitalOcean](https://cloud.digitalocean.com/) account
+- [DigitalOcean Container Registry](https://docs.digitalocean.com/products/container-registry/) (DOCR) created
+- GitHub repo: `Benedict-Kpaduwa/Transit`
 
-## Deploy
+## Setup
 
-### Option 1 — Via Dashboard (Recommended)
-
-1. Go to **DigitalOcean → App Platform → Create App**
-2. Connect your GitHub repo (`Benedict-Kpaduwa/Transit`)
-3. DO will auto-detect `.do/app.yaml` — confirm the spec
-4. Set environment variables in the dashboard:
-
-   **Backend (calgary-transit-api):**
-   | Variable | Description |
-   |---|---|
-   | `CALGARY_APP_TOKEN` | Calgary Open Data API token |
-   | `MAPBOX_ACCESS_TOKEN` | Mapbox GL access token |
-   | `TRANSIT_API_KEY` | Transit App API key |
-   | `GOOGLE_API_KEY` | Google Directions API key |
-
-   **Frontend (calgary-transit-web):**
-   | Variable | Description |
-   |---|---|
-   | `VITE_MAPBOX_ACCESS_TOKEN` | Mapbox GL access token |
-   | `VITE_API_BASE_URL` | Auto-set from backend URL |
-
-5. Click **Create Resources** — deploy takes ~5 minutes
-
-### Option 2 — Via CLI
+### 1. Create Container Registry
 
 ```bash
-# Install doctl
-brew install doctl
+doctl registry create calgary-transit
+```
 
-# Authenticate
-doctl auth init
+### 2. Add GitHub Secrets
 
-# Create the app from the spec
+Go to **GitHub → Repo → Settings → Secrets and variables → Actions** and add:
+
+| Secret | Description |
+|---|---|
+| `DIGITALOCEAN_ACCESS_TOKEN` | DigitalOcean API token ([create here](https://cloud.digitalocean.com/account/api/tokens)) |
+| `REGISTRY_NAME` | Your DOCR registry name (e.g. `calgary-transit`) |
+| `VITE_MAPBOX_ACCESS_TOKEN` | Mapbox GL access token |
+
+### 3. Create App on DigitalOcean
+
+```bash
 doctl apps create --spec .do/app.yaml
+```
 
-# Set secrets (replace with your actual values)
-doctl apps update <app-id> --spec .do/app.yaml
+Or via dashboard: **App Platform → Create App → Import from GitHub**.
+
+### 4. Set Runtime Secrets in Dashboard
+
+Go to **App Settings → Environment Variables** and set:
+
+| Variable | Description |
+|---|---|
+| `CALGARY_APP_TOKEN` | Calgary Open Data API token |
+| `MAPBOX_ACCESS_TOKEN` | Mapbox GL access token |
+| `TRANSIT_API_KEY` | Transit App API key |
+| `GOOGLE_API_KEY` | Google Directions API key |
+
+### 5. Push to Deploy
+
+Every push to `main` triggers the CI/CD pipeline:
+
+```
+Push → GitHub Actions → Build Image → Push to DOCR → Redeploy App
+```
+
+## Local Development
+
+```bash
+# Run backend
+cd backend && pip install -r requirements.txt && uvicorn main:app --reload
+
+# Run frontend (separate terminal)
+cd frontend && pnpm install && pnpm dev
+```
+
+## Local Docker Build
+
+```bash
+docker build --build-arg VITE_MAPBOX_ACCESS_TOKEN=your_token -t calgary-transit .
+docker run -p 8080:8080 --env-file backend/.env calgary-transit
+# Visit http://localhost:8080
 ```
 
 ## Custom Domain
 
 1. Go to **App Settings → Domains**
 2. Add your domain and follow the DNS instructions
-3. SSL is provisioned automatically by DigitalOcean
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│           DigitalOcean App Platform         │
-│                                             │
-│  ┌──────────────────┐  ┌────────────────┐   │
-│  │ calgary-transit-  │  │ calgary-transit │   │
-│  │ api (Docker)      │  │ -web (Static)   │   │
-│  │                   │  │                 │   │
-│  │ FastAPI + GTFS    │←─│ Vite + React    │   │
-│  │ Port 8000         │  │ pnpm build      │   │
-│  └──────────────────┘  └────────────────┘   │
-└─────────────────────────────────────────────┘
-```
+3. SSL is provisioned automatically
 
 ## Useful Commands
 
 ```bash
-# View app logs
-doctl apps logs <app-id> --type run
-
-# List deployments
-doctl apps list-deployments <app-id>
-
-# Force redeploy
-doctl apps create-deployment <app-id>
+doctl apps list                              # List apps
+doctl apps logs <app-id> --type run          # View logs
+doctl apps list-deployments <app-id>         # List deployments
+doctl apps create-deployment <app-id>        # Force redeploy
 ```
