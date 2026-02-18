@@ -60,13 +60,19 @@ async def startup():
     """Initialize GTFS data on startup"""
     print("🚀 Starting Calgary Transit API v3.0...")
 
-    # Download GTFS if needed
-    await download_static_gtfs()
+    import asyncio
 
-    # Load GTFS data into memory
-    load_gtfs_static()
+    async def load_gtfs_background():
+        """Load GTFS data in background so server starts immediately"""
+        try:
+            await download_static_gtfs()
+            load_gtfs_static()
+            print("✅ GTFS data loaded!")
+        except Exception as e:
+            print(f"❌ GTFS loading error: {e}")
 
-    print("✅ API ready!")
+    asyncio.create_task(load_gtfs_background())
+    print("✅ API started! GTFS data loading in background...")
 
 
 @app.get("/")
