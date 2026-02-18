@@ -7,7 +7,7 @@ services:
   - name: calgary-transit
     github:
       repo: Benedict-Kpaduwa/Transit
-      branch: main
+      branch: master
       deploy_on_push: true
     dockerfile_path: Dockerfile
     http_port: 8080

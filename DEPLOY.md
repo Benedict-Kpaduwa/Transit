@@ -5,7 +5,7 @@
 Single Docker container running **Nginx** (port 8080) + **FastAPI/Uvicorn** (port 8000), managed by **supervisord**.
 
 - Nginx serves the frontend static files and proxies `/api/*` → FastAPI
-- GitHub Actions CI/CD auto-deploys on push to `main`
+- GitHub Actions CI/CD auto-deploys on push to `master`
 
 ## Prerequisites
 
@@ -52,7 +52,7 @@ Go to **App Settings → Environment Variables** and set:
 
 ### 5. Push to Deploy
 
-Every push to `main` triggers the CI/CD pipeline:
+Every push to `master` triggers the CI/CD pipeline:
 
 ```
 Push → GitHub Actions → Build Image → Push to DOCR → Redeploy App
