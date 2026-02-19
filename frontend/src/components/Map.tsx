@@ -77,14 +77,17 @@ const Map = ({
   );
 
 
-  // Live trains visibility toggle - from store so sidebar can control it
-  const { showLiveTrains, setShowLiveTrains, showLiveBuses, setShowLiveBuses } = useMapStore();
-
-  // Bus stops visibility toggle
-  const [showBusStops, setShowBusStops] = useState(false);
-
-  // Train lines visibility toggle (hidden by default, shown when directions active)
-  const [showTrainLines, setShowTrainLines] = useState(false);
+  // Visibility toggles - from store so sidebar/dashboard can control it
+  const { 
+    showLiveTrains, 
+    setShowLiveTrains, 
+    showLiveBuses, 
+    setShowLiveBuses,
+    showBusStops,
+    setShowBusStops,
+    showTrainLines,
+    setShowTrainLines
+  } = useMapStore();
   // Ref to track showTrainLines for style.load event
   const showTrainLinesRef = useRef(showTrainLines);
 

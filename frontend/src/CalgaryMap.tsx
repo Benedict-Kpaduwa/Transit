@@ -202,27 +202,6 @@ const CalgaryMap = () => {
             onCloseStationInfo={handleCloseStationInfo}
           />
         </div>
-
-        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-10 w-full max-w-[calc(100vw-3rem)] px-4">
-          <div className="bg-zinc-950/90 backdrop-blur-2xl border border-zinc-900 rounded-4xl p-3 sm:p-4 shadow-2xl">
-            <div className="flex items-center justify-around gap-3 sm:gap-6 text-[10px] sm:text-sm">
-              <div className="flex items-center gap-2">
-                <div className="size-8 rounded-lg bg-zinc-900 flex items-center justify-center">
-                  <MapPin className="size-4 text-zinc-500" />
-                </div>
-                <span className="text-zinc-400 font-bold uppercase tracking-wider hidden sm:inline">Station</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-8 sm:w-12 h-1.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.4)]"></div>
-                <span className="text-zinc-300 font-black uppercase tracking-wider">Red</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-8 sm:w-12 h-1.5 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.4)]"></div>
-                <span className="text-zinc-300 font-black uppercase tracking-wider">Blue</span>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

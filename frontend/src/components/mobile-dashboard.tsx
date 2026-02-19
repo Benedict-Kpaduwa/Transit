@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Train, Bus, MapPin, Navigation, Clock, Search, Settings } from "lucide-react";
+import { Train, Bus, MapPin, Navigation, Clock, Search, Settings, Radio, X } from "lucide-react";
 import { useMapStore } from "@/stores/useMapStore";
 import { useAllStationsByLineSorted } from "@/hooks/queries";
 import { useNearbyArrivals, formatArrivalTime, getArrivalUrgencyColor } from "@/hooks/useArrivals";
@@ -11,8 +11,14 @@ export function MobileDashboard() {
     setMobileView, 
     setSelectedStation, 
     userLocation, 
-    setShowLiveBuses, 
-    setShowLiveTrains 
+    showLiveBuses,
+    setShowLiveBuses,
+    showLiveTrains,
+    setShowLiveTrains,
+    showBusStops,
+    setShowBusStops,
+    showTrainLines,
+    setShowTrainLines
   } = useMapStore();
   const { data: stations } = useAllStationsByLineSorted();
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -86,27 +92,28 @@ export function MobileDashboard() {
           </div>
           <div className="flex gap-4 overflow-x-auto pb-4 -mx-5 px-5 scrollbar-hide no-scrollbar">
             <QuickActionButton 
-              icon={Train} 
-              label="Red Line" 
-              color="bg-red-500"
-              onClick={() => { setSelectedStation(null); setMobileView("map"); }} 
-            />
-            <QuickActionButton 
-              icon={Train} 
-              label="Blue Line" 
-              color="bg-blue-500"
-              onClick={() => { setSelectedStation(null); setMobileView("map"); }} 
+              icon={Radio} 
+              label="Live Trains" 
+              color={showLiveTrains ? "bg-red-600 shadow-red-500/20" : "bg-zinc-900 border border-zinc-900"}
+              onClick={() => { setShowLiveTrains(!showLiveTrains); setMobileView("map"); }} 
             />
             <QuickActionButton 
               icon={Bus} 
-              label="Live Buses" 
-              color="bg-emerald-500"
-              onClick={() => { setShowLiveBuses(true); setMobileView("map"); }} 
+              label="Bus Stops" 
+              color={showBusStops ? "bg-green-600 shadow-green-500/20" : "bg-zinc-900 border border-zinc-900"}
+              onClick={() => { setShowBusStops(!showBusStops); setMobileView("map"); }} 
             />
             <QuickActionButton 
-              icon={Settings} 
-              label="Settings" 
-              color="bg-zinc-700" 
+              icon={() => <span className="text-2xl">🚌</span>} 
+              label="Live Buses" 
+              color={showLiveBuses ? "bg-emerald-600 shadow-emerald-500/20" : "bg-zinc-900 border border-zinc-900"}
+              onClick={() => { setShowLiveBuses(!showLiveBuses); setMobileView("map"); }} 
+            />
+            <QuickActionButton 
+              icon={Train} 
+              label="Route Lines" 
+              color={showTrainLines ? "bg-purple-600 shadow-purple-500/20" : "bg-zinc-900 border border-zinc-900"} 
+              onClick={() => { setShowTrainLines(!showTrainLines); setMobileView("map"); }} 
             />
           </div>
         </section>
@@ -155,7 +162,7 @@ export function MobileDashboard() {
                    </div>
                 </div>
                 <div className="space-y-2">
-                  {stopData.arrivals.slice(0, 2).map((arr, j) => (
+                   {stopData.arrivals.slice(0, 2).map((arr, j) => (
                     <div key={j} className="flex items-center justify-between bg-zinc-950/50 p-3 rounded-2xl border border-zinc-800/50">
                        <div className="flex items-center gap-3">
                          <span className="text-xs font-black px-2 py-1 rounded-lg" style={{ backgroundColor: arr.color, color: 'white' }}>{arr.route_short_name}</span>
@@ -183,12 +190,16 @@ function QuickActionButton({ icon: Icon, label, color, onClick }: any) {
       className="flex flex-col items-center gap-3 shrink-0 group"
     >
       <div className={cn(
-        "size-16 rounded-[1.75rem] flex items-center justify-center text-white shadow-lg transition-all duration-300 group-active:scale-90",
+        "size-16 rounded-[1.75rem] flex items-center justify-center text-white shadow-lg transition-all duration-300 group-active:scale-95",
         color
       )}>
-        <Icon className="size-7" />
+        {typeof Icon === 'function' && !Icon.prototype?.render ? (
+          Icon()
+        ) : (
+          <Icon className="size-7" />
+        )}
       </div>
-      <span className="text-xs font-bold text-zinc-400 whitespace-nowrap">{label}</span>
+      <span className="text-[10px] font-black uppercase tracking-tighter text-zinc-500">{label}</span>
     </button>
   );
 }
