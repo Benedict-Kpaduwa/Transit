@@ -29,6 +29,7 @@ import { useTheme } from "@/stores/use-theme-store";
 import { useMapStore } from "@/stores/useMapStore";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useStationArrivals, formatArrivalTime, getArrivalUrgencyColor } from "@/hooks/useArrivals";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 // Map themes to Mapbox styles
 const MAPBOX_STYLES = {
@@ -55,6 +56,7 @@ const Map = ({
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const userLocationMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const isMobile = useIsMobile();
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapInstance, setMapInstance] = useState<mapboxgl.Map | null>(null);
   const [userLocation, setUserLocationLocal] = useState<{
@@ -1725,8 +1727,8 @@ const Map = ({
           />
         )}
 
-        {/* Map Search - top center */}
-        {mapLoaded && <MapSearch onGetDirections={handleGetDirections} onClear={handleClearSearch} />}
+        {/* On mobile, we hide these components to keep the map view clean and unfettered */}
+        {!isMobile && mapLoaded && <MapSearch onGetDirections={handleGetDirections} onClear={handleClearSearch} />}
 
         {/* Station Search - top left */}
         {/* {mapLoaded && (
@@ -1739,7 +1741,7 @@ const Map = ({
         {/* Nearby Arrivals moved to Sidebar */}
 
         {/* Trip Planner - Google Maps style floating panel */}
-        {mapLoaded && (
+        {!isMobile && mapLoaded && (
           <TripPlanner
             userLocation={userLocation}
             onRouteCalculated={handleRouteCalculated}
@@ -1834,91 +1836,96 @@ const Map = ({
             )}
           </button>
 
-          {/* Live Trains Toggle */}
-          <button
-            onClick={() => setShowLiveTrains(!showLiveTrains)}
-            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
-              showLiveTrains && hasRealTimeData
-                ? "bg-green-600/90 border-green-500 hover:bg-green-500"
-                : showLiveTrains && !hasRealTimeData
-                ? "bg-amber-600/90 border-amber-500 hover:bg-amber-500"
-                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
-            }`}
-            aria-label={
-              showLiveTrains ? "Hide live trains" : "Show live trains"
-            }
-            title={showLiveTrains ? "Hide live trains" : "Show live trains"}
-          >
-            {isFetchingTrains && showLiveTrains ? (
-              <Loader2 className="w-5 h-5 text-white animate-spin" />
-            ) : showLiveTrains && hasRealTimeData ? (
-              <Wifi className="w-5 h-5 text-white" />
-            ) : showLiveTrains && !hasRealTimeData ? (
-              <WifiOff className="w-5 h-5 text-white" />
-            ) : (
-              <Radio className="w-5 h-5 text-zinc-300" />
-            )}
-          </button>
+          {/* Transit Layers Toggles - Hidden on mobile to keep view clean, managed via dashboard */}
+          {!isMobile && (
+            <>
+              {/* Live Trains Toggle */}
+              <button
+                onClick={() => setShowLiveTrains(!showLiveTrains)}
+                className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+                  showLiveTrains && hasRealTimeData
+                    ? "bg-green-600/90 border-green-500 hover:bg-green-500"
+                    : showLiveTrains && !hasRealTimeData
+                    ? "bg-amber-600/90 border-amber-500 hover:bg-amber-500"
+                    : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
+                }`}
+                aria-label={
+                  showLiveTrains ? "Hide live trains" : "Show live trains"
+                }
+                title={showLiveTrains ? "Hide live trains" : "Show live trains"}
+              >
+                {isFetchingTrains && showLiveTrains ? (
+                  <Loader2 className="w-5 h-5 text-white animate-spin" />
+                ) : showLiveTrains && hasRealTimeData ? (
+                  <Wifi className="w-5 h-5 text-white" />
+                ) : showLiveTrains && !hasRealTimeData ? (
+                  <WifiOff className="w-5 h-5 text-white" />
+                ) : (
+                  <Radio className="w-5 h-5 text-zinc-300" />
+                )}
+              </button>
 
-          {/* Bus Stops Toggle */}
-          <button
-            onClick={() => setShowBusStops(!showBusStops)}
-            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
-              showBusStops
-                ? "bg-green-600/90 border-green-500 hover:bg-green-500"
-                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
-            }`}
-            aria-label={showBusStops ? "Hide bus stops" : "Show bus stops"}
-            title={showBusStops ? "Hide bus stops" : "Show bus stops"}
-          >
-            <Bus
-              className={`w-5 h-5 ${
-                showBusStops ? "text-white" : "text-zinc-300"
-              }`}
-            />
-          </button>
+              {/* Bus Stops Toggle */}
+              <button
+                onClick={() => setShowBusStops(!showBusStops)}
+                className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+                  showBusStops
+                    ? "bg-green-600/90 border-green-500 hover:bg-green-500"
+                    : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
+                }`}
+                aria-label={showBusStops ? "Hide bus stops" : "Show bus stops"}
+                title={showBusStops ? "Hide bus stops" : "Show bus stops"}
+              >
+                <Bus
+                  className={`w-5 h-5 ${
+                    showBusStops ? "text-white" : "text-zinc-300"
+                  }`}
+                />
+              </button>
 
-          {/* Live Buses Toggle */}
-          <button
-            onClick={() => setShowLiveBuses(!showLiveBuses)}
-            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
-              showLiveBuses && transformedBuses.length > 0
-                ? "bg-emerald-600/90 border-emerald-500 hover:bg-emerald-500"
-                : showLiveBuses && transformedBuses.length === 0
-                ? "bg-amber-600/90 border-amber-500 hover:bg-amber-500"
-                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
-            }`}
-            aria-label={showLiveBuses ? "Hide live buses" : "Show live buses"}
-            title={showLiveBuses ? "Hide live buses" : "Show live buses"}
-          >
-            {isFetchingBuses && showLiveBuses ? (
-              <Loader2 className="w-5 h-5 text-white animate-spin" />
-            ) : (
-              <span className="text-lg" role="img" aria-label="bus">
-                🚌
-              </span>
-            )}
-          </button>
+              {/* Live Buses Toggle */}
+              <button
+                onClick={() => setShowLiveBuses(!showLiveBuses)}
+                className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+                  showLiveBuses && transformedBuses.length > 0
+                    ? "bg-emerald-600/90 border-emerald-500 hover:bg-emerald-500"
+                    : showLiveBuses && transformedBuses.length === 0
+                    ? "bg-amber-600/90 border-amber-500 hover:bg-amber-500"
+                    : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
+                }`}
+                aria-label={showLiveBuses ? "Hide live buses" : "Show live buses"}
+                title={showLiveBuses ? "Hide live buses" : "Show live buses"}
+              >
+                {isFetchingBuses && showLiveBuses ? (
+                  <Loader2 className="w-5 h-5 text-white animate-spin" />
+                ) : (
+                  <span className="text-lg" role="img" aria-label="bus">
+                    🚌
+                  </span>
+                )}
+              </button>
 
-          {/* Train Lines Toggle */}
-          <button
-            onClick={() => setShowTrainLines(!showTrainLines)}
-            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
-              showTrainLines
-                ? "bg-purple-600/90 border-purple-500 hover:bg-purple-500"
-                : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
-            }`}
-            aria-label={
-              showTrainLines ? "Hide train lines" : "Show train lines"
-            }
-            title={showTrainLines ? "Hide train lines" : "Show train lines"}
-          >
-            <Train
-              className={`w-5 h-5 ${
-                showTrainLines ? "text-white" : "text-zinc-300"
-              }`}
-            />
-          </button>
+              {/* Train Lines Toggle */}
+              <button
+                onClick={() => setShowTrainLines(!showTrainLines)}
+                className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+                  showTrainLines
+                    ? "bg-purple-600/90 border-purple-500 hover:bg-purple-500"
+                    : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
+                }`}
+                aria-label={
+                  showTrainLines ? "Hide train lines" : "Show train lines"
+                }
+                title={showTrainLines ? "Hide train lines" : "Show train lines"}
+              >
+                <Train
+                  className={`w-5 h-5 ${
+                    showTrainLines ? "text-white" : "text-zinc-300"
+                  }`}
+                />
+              </button>
+            </>
+          )}
         </div>
 
         {/* Train/Bus Status Indicator - Only show when live vehicles is active */}
