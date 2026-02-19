@@ -24,6 +24,7 @@ import VehicleLayer, {
   type VehiclePositionData,
 } from "@/components/map/vehicle-layer";
 import Vehicle3DLayer from "@/components/map/Vehicle3DLayer";
+import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 import { useTheme } from "@/stores/use-theme-store";
 import { useMapStore } from "@/stores/useMapStore";
@@ -1719,12 +1720,15 @@ const Map = ({
           />
         )}
 
-        {/* 3D Vehicle Models Layer */}
-        {mapLoaded && (showLiveTrains || showLiveBuses || trackedVehicle) && (
-          <Vehicle3DLayer
-            map={mapInstance}
-            vehicles={allVehicles}
-          />
+        {/* 3D Vehicle Models Layer - Always mounted but conditionally active to prevent unmount crashes */}
+        {mapLoaded && (
+          <ErrorBoundary fallback={<div className="hidden" />}>
+            <Vehicle3DLayer
+              map={mapInstance}
+              vehicles={allVehicles}
+              isVisible={!!(showLiveTrains || showLiveBuses || trackedVehicle)}
+            />
+          </ErrorBoundary>
         )}
 
         {/* On mobile, we hide these components to keep the map view clean and unfettered */}

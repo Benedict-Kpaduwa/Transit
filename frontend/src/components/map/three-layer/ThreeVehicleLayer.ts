@@ -119,104 +119,104 @@ export class ThreeVehicleLayer implements mapboxgl.CustomLayerInterface {
     }
 
     updateData(vehicles: VehiclePosition[]) {
-        const activeIds = new Set(vehicles.map(v => v.id));
+        try {
+            const activeIds = new Set(vehicles.map(v => v.id));
 
-        // Cleanup old
-        for (const [id, group] of this.vehicles) {
-            if (!activeIds.has(id)) {
-                this.scene.remove(group);
-                this.vehicles.delete(id);
+            // Cleanup old
+            for (const [id, group] of this.vehicles) {
+                if (!activeIds.has(id)) {
+                    this.scene.remove(group);
+                    this.vehicles.delete(id);
+                }
             }
+
+            // Update targets
+            vehicles.forEach(v => this.targetPositions.set(v.id, v));
+
+            this.updateVehicles();
+            if (this.map) this.map.triggerRepaint();
+        } catch (e) {
+            console.error("Error updating 3D vehicle data:", e);
         }
-
-        // Update targets
-        vehicles.forEach(v => this.targetPositions.set(v.id, v));
-
-        this.updateVehicles();
-        if (this.map) this.map.triggerRepaint();
     }
 
     private updateVehicles() {
         if (!this.map) return;
 
-        this.targetPositions.forEach((data, id) => {
-            let group = this.vehicles.get(id);
+        try {
+            this.targetPositions.forEach((data, id) => {
+                let group = this.vehicles.get(id);
 
-            if (!group) {
-                // Instantiate model
-                let template = data.vehicleType === "CTrain" ? this.trainModel : this.busModel;
-                if (!template) return;
+                if (!group) {
+                    // Instantiate model
+                    let template = data.vehicleType === "CTrain" ? this.trainModel : this.busModel;
+                    if (!template) return;
 
-                group = template.scene.clone();
+                    group = template.scene.clone();
 
-                // Apply colors
-                const color = this.getVehicleColor(data);
-                group.traverse((child: any) => {
-                    if (child.isMesh) {
-                        // Use Standard material for better lighting reaction
-                        child.material = new THREE.MeshStandardMaterial({
-                            color: color,
-                            roughness: 0.5,
-                            metalness: 0.5
-                        });
-                    }
-                });
+                    // Apply colors
+                    const color = this.getVehicleColor(data);
+                    group.traverse((child: any) => {
+                        if (child.isMesh) {
+                            child.material = new THREE.MeshStandardMaterial({
+                                color: color,
+                                roughness: 0.5,
+                                metalness: 0.5
+                            });
+                        }
+                    });
 
-                this.scene.add(group);
-                this.vehicles.set(id, group);
-            }
+                    this.scene.add(group);
+                    this.vehicles.set(id, group);
+                }
 
-            // Position
-            const mercator = mapboxgl.MercatorCoordinate.fromLngLat(
-                { lng: data.lng, lat: data.lat },
-                0
-            );
+                const mercator = mapboxgl.MercatorCoordinate.fromLngLat(
+                    { lng: data.lng, lat: data.lat },
+                    0
+                );
 
-            // Mapbox units per meter
-            const unitsPerMeter = mercator.meterInMercatorCoordinateUnits();
+                const unitsPerMeter = mercator.meterInMercatorCoordinateUnits();
+                const length = data.vehicleType === "CTrain" ? 30 : 12;
+                const scale = unitsPerMeter * length;
 
-            // Real world size
-            // Bus ~12m, CTrain ~25m per car.
-            // If single model represents the whole train, ok. 
-            // If the model is a single car, 25m makes sense.
-            const length = data.vehicleType === "CTrain" ? 30 : 12;
-            const scale = unitsPerMeter * length;
-
-            group.position.set(mercator.x, mercator.y, mercator.z);
-            group.scale.set(scale, scale, scale);
-
-            // Rotation
-            // Model is Z-up after our internal rotation? No, loaded GLTF is Y-up.
-            // We need to transform Y-up (GLTF) to Z-up (Mapbox)
-            // Rotate X by 90deg (PI/2)
-
-            group.rotation.set(0, 0, 0);
-
-            // First rotate model to be Z-up
-            group.rotateX(Math.PI / 2);
-
-            // Then rotate around Z axis for bearing
-            // Bearing is clockwise from North (0).
-            // In standard math angle (CCW from East):
-            // North is +90.
-            // Mapbox rotation usually: -bearing works if alignment is standard.
-            group.rotateZ(-(data.bearing * Math.PI / 180));
-        });
+                group.position.set(mercator.x, mercator.y, mercator.z);
+                group.scale.set(scale, scale, scale);
+                group.rotation.set(0, 0, 0);
+                group.rotateX(Math.PI / 2);
+                group.rotateZ(-(data.bearing * Math.PI / 180));
+            });
+        } catch (e) {
+            console.error("Error updating 3D vehicle models:", e);
+        }
     }
 
     private getVehicleColor(data: VehiclePosition): number {
         if (data.vehicleType === "CTrain") {
             return data.line === "red" ? 0xdc2626 : 0x2563eb;
         }
-        return 0x22c55e; // Green bus
+        return 0x22c55e;
     }
 
     render(gl: WebGLRenderingContext, matrix: number[]) {
-        if (!this.renderer) return;
-        const m = new THREE.Matrix4().fromArray(matrix);
-        this.camera.projectionMatrix = m;
-        this.renderer.resetState();
-        this.renderer.render(this.scene, this.camera);
-        if (this.map) this.map.triggerRepaint();
+        if (!this.renderer || !this.map) return;
+        try {
+            const m = new THREE.Matrix4().fromArray(matrix);
+            this.camera.projectionMatrix = m;
+            this.renderer.resetState();
+            this.renderer.render(this.scene, this.camera);
+            this.map.triggerRepaint();
+        } catch (e) {
+            console.error("Error rendering 3D vehicles:", e);
+        }
+    }
+
+    onRemove() {
+        if (this.renderer) {
+            this.renderer.dispose();
+            this.renderer = null;
+        }
+        this.map = null;
+        this.vehicles.clear();
+        this.targetPositions.clear();
     }
 }

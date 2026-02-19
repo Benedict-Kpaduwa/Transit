@@ -36,7 +36,8 @@ const CalgaryMap = () => {
     setMobileView,
     trackedVehicle,
     showLiveBuses,
-    showLiveTrains
+    showLiveTrains,
+    resetMapToggles
   } = useMapStore();
   const { toggleSidebar } = useSidebar();
 
@@ -77,23 +78,23 @@ const CalgaryMap = () => {
     return <SplashScreen />;
   }
 
+  if (isLoading) {
+    return <SplashScreen />;
+  }
+
   if (error) {
     return (
       <ErrorScreen
-        error={error.message}
+        error={(error as any)?.message || "An unknown error occurred"}
         handleRefresh={refetch}
         refreshing={isLoading}
       />
     );
   }
 
-  // Uber-style: Render Dashboard by default on Mobile
-  if (isMobile && mobileView === "home") {
-    return <MobileDashboard />;
-  }
-
   return (
     <div className="relative flex flex-col lg:flex-row min-h-screen bg-linear-to-br from-gray-900 via-black to-gray-900 overflow-hidden">
+      {/* Background patterns */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-1 bg-linear-to-r from-transparent via-blue-500/20 to-transparent animate-pulse"></div>
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-blue-500/5 rounded-full blur-3xl"></div>
@@ -109,38 +110,48 @@ const CalgaryMap = () => {
         ></div>
       </div>
 
-      <div className="lg:hidden bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-900/50 p-4 z-20">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {/* Back to Home Button on Map View */}
-            <button
-              onClick={() => { setSelectedStation(null); setMobileView("home"); }}
-              className="p-2.5 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-colors mr-1"
-              aria-label="Back to home"
-            >
-              <ArrowLeft className="size-5 text-white" />
-            </button>
-            <div className="p-2 bg-linear-to-br from-zinc-800 to-zinc-900 rounded-lg">
-              <Navigation className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h1 className="text-sm font-black text-white leading-none">Map View</h1>
-              <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mt-0.5">Live Network</p>
-            </div>
-          </div>
+      {/* Mobile Dashboard - Rendered on top of map when in 'home' view */}
+      {isMobile && mobileView === "home" && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black">
+          <MobileDashboard />
+        </div>
+      )}
 
-          <div className="flex items-center gap-3">
-             <div className="flex items-center gap-1.5 px-2 py-1 bg-red-500/10 rounded-lg border border-red-500/20">
-              <div className="w-2 h-2 rounded-full bg-red-500"></div>
-              <span className="text-red-400 text-[10px] font-black uppercase">Red</span>
+      {/* Mobile Header - Always visible when Map is active on mobile */}
+      {isMobile && mobileView === "map" && (
+        <div className="lg:hidden bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-900/50 p-4 z-20">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {/* Back to Home Button on Map View */}
+              <button
+                onClick={() => { resetMapToggles(); setMobileView("home"); }}
+                className="p-2.5 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-colors mr-1"
+                aria-label="Back to home"
+              >
+                <ArrowLeft className="size-5 text-white" />
+              </button>
+              <div className="p-2 bg-linear-to-br from-zinc-800 to-zinc-900 rounded-lg">
+                <Navigation className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-sm font-black text-white leading-none">Map View</h1>
+                <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mt-0.5">Live Network</p>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-500/10 rounded-lg border border-blue-500/20">
-              <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-              <span className="text-blue-400 text-[10px] font-black uppercase">Blue</span>
+
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 px-2 py-1 bg-red-500/10 rounded-lg border border-red-500/20">
+                <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                <span className="text-red-400 text-[10px] font-black uppercase">Red</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-500/10 rounded-lg border border-blue-500/20">
+                <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                <span className="text-blue-400 text-[10px] font-black uppercase">Blue</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="flex-1 relative min-h-[70vh] lg:min-h-screen">
         {!isMobile && (
