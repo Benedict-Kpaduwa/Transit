@@ -1,10 +1,14 @@
 import * as React from "react";
 import { cva } from "class-variance-authority";
-import { PanelLeftIcon, ChevronDown, type LucideIcon } from "lucide-react";
+import { PanelLeftIcon, ChevronDown, Menu, type LucideIcon } from "lucide-react";
 
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+} from "@/components/ui/sheet";
 import {
   Tooltip,
   TooltipContent,
@@ -21,6 +25,8 @@ type SidebarContextProps = {
   setOpen: (open: boolean) => void;
   isMobile: boolean;
   toggleSidebar: () => void;
+  openMobile: boolean;
+  setOpenMobile: (open: boolean) => void;
 };
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
@@ -48,6 +54,7 @@ export function SidebarProvider({
 }) {
   const isMobile = useIsMobile();
   const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen);
+  const [openMobile, setOpenMobile] = React.useState(false);
 
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : uncontrolledOpen;
@@ -64,14 +71,18 @@ export function SidebarProvider({
   );
 
   const toggleSidebar = React.useCallback(() => {
-    setOpen(!open);
-  }, [open, setOpen]);
+    if (isMobile) {
+      setOpenMobile((prev) => !prev);
+    } else {
+      setOpen(!open);
+    }
+  }, [open, setOpen, isMobile]);
 
   const state: "expanded" | "collapsed" = open ? "expanded" : "collapsed";
 
   const value = React.useMemo(
-    () => ({ state, open, setOpen, isMobile, toggleSidebar }),
-    [state, open, setOpen, isMobile, toggleSidebar]
+    () => ({ state, open, setOpen, isMobile, toggleSidebar, openMobile, setOpenMobile }),
+    [state, open, setOpen, isMobile, toggleSidebar, openMobile, setOpenMobile]
   );
 
   return (
@@ -94,7 +105,25 @@ export function SidebarProvider({
 }
 
 export function Sidebar({ children, className }: React.ComponentProps<"div">) {
-  const { state } = useSidebar();
+  const { state, isMobile, openMobile, setOpenMobile } = useSidebar();
+
+  if (isMobile) {
+    return (
+      <Sheet open={openMobile} onOpenChange={setOpenMobile}>
+        <SheetContent
+          side="left"
+          className={cn(
+            "w-[85vw] max-w-[24rem] p-0 bg-sidebar border-sidebar-border [&>button]:hidden",
+            className
+          )}
+        >
+          <div className="flex h-full w-full flex-col overflow-hidden">
+            {children}
+          </div>
+        </SheetContent>
+      </Sheet>
+    );
+  }
 
   return (
     <aside

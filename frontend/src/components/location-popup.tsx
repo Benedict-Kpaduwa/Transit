@@ -80,9 +80,9 @@ export function LocationPopup({
       closeOnClick={false}
       focusAfterOpen={false}
     >
-      <div className="w-[320px] bg-white dark:bg-zinc-900/95 backdrop-blur-xl border border-zinc-200 dark:border-zinc-700/50 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="w-[min(320px,calc(100vw-3rem))] bg-white dark:bg-zinc-900/95 backdrop-blur-xl border border-zinc-200 dark:border-zinc-700/50 rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="relative bg-gradient-to-r from-blue-500/10 to-indigo-500/10 dark:from-blue-600/20 dark:to-purple-600/20 p-4 border-b border-zinc-200 dark:border-zinc-700/50">
+        <div className="relative bg-linear-to-r from-blue-500/10 to-indigo-500/10 dark:from-blue-600/20 dark:to-purple-600/20 p-4 border-b border-zinc-200 dark:border-zinc-700/50">
           {/* Close button */}
           <button
             onClick={onClose}
@@ -195,7 +195,7 @@ export function LocationPopup({
                   coordinates: [lng, lat],
                 })
               }
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-medium shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all duration-200"
+              className="w-full bg-linear-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-medium shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all duration-200"
               size="lg"
             >
               <Navigation className="w-4 h-4 mr-2" />

@@ -427,7 +427,7 @@ export default function TripPlanner({
     (originCoords && destCoords);
 
   return (
-    <div className="absolute top-16 right-20 z-20 w-[360px]">
+    <div className="absolute top-4 sm:top-16 right-4 sm:right-20 z-20 w-[calc(100vw-2rem)] sm:w-[360px]">
       {/* Collapsed state */}
       {!isExpanded && (
         <button
@@ -611,7 +611,7 @@ export default function TripPlanner({
                   </div>
 
                   {/* Segments */}
-                  <div className="px-4 py-3 max-h-[320px] overflow-y-auto space-y-2">
+                  <div className="px-4 py-3 max-h-[40vh] sm:max-h-[320px] overflow-y-auto space-y-2">
                     {tripPlan.segments?.map((segment, index) => (
                       <TripSegmentCard
                         key={index}
