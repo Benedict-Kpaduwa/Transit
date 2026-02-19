@@ -32,6 +32,9 @@ interface MapStore {
   setShowLiveBuses: (show: boolean) => void;
   showLiveTrains: boolean;
   setShowLiveTrains: (show: boolean) => void;
+  // Mobile UI state
+  mobileView: "home" | "map";
+  setMobileView: (view: "home" | "map") => void;
 }
 
 export const useMapStore = create<MapStore>((set) => ({
@@ -48,4 +51,6 @@ export const useMapStore = create<MapStore>((set) => ({
   setShowLiveBuses: (show) => set({ showLiveBuses: show }),
   showLiveTrains: false,
   setShowLiveTrains: (show) => set({ showLiveTrains: show }),
+  mobileView: "home",
+  setMobileView: (view) => set({ mobileView: view }),
 }));

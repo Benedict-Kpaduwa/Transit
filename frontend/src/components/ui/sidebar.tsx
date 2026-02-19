@@ -108,21 +108,7 @@ export function Sidebar({ children, className }: React.ComponentProps<"div">) {
   const { state, isMobile, openMobile, setOpenMobile } = useSidebar();
 
   if (isMobile) {
-    return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile}>
-        <SheetContent
-          side="left"
-          className={cn(
-            "w-[85vw] max-w-[24rem] p-0 bg-sidebar border-sidebar-border [&>button]:hidden",
-            className
-          )}
-        >
-          <div className="flex h-full w-full flex-col overflow-hidden">
-            {children}
-          </div>
-        </SheetContent>
-      </Sheet>
-    );
+    return null;
   }
 
   return (
