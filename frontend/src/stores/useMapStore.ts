@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Station } from "@/types";
+import type { LocationFeature } from "@/lib/mapbox/utils";
 
 interface FocusedVehicle {
   vehicleId: string;
@@ -43,6 +44,11 @@ interface MapStore {
   // Global Map Instance access
   mapInstance: mapboxgl.Map | null;
   setMapInstance: (map: mapboxgl.Map | null) => void;
+  // Search results state
+  selectedLocations: LocationFeature[];
+  setSelectedLocations: (locations: LocationFeature[]) => void;
+  searchResult: LocationFeature | null;
+  setSearchResult: (location: LocationFeature | null) => void;
 }
 
 export const useMapStore = create<MapStore>((set) => ({
@@ -76,4 +82,8 @@ export const useMapStore = create<MapStore>((set) => ({
   }),
   mapInstance: null,
   setMapInstance: (map) => set({ mapInstance: map }),
+  selectedLocations: [],
+  setSelectedLocations: (locations) => set({ selectedLocations: locations }),
+  searchResult: null,
+  setSearchResult: (location) => set({ searchResult: location }),
 }));

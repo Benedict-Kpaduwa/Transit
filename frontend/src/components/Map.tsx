@@ -31,6 +31,8 @@ import { useMapStore } from "@/stores/useMapStore";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useStationArrivals, formatArrivalTime, getArrivalUrgencyColor } from "@/hooks/useArrivals";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { LocationMarker } from "./location-marker";
+import { LocationPopup } from "./location-popup";
 
 // Map themes to Mapbox styles
 const MAPBOX_STYLES = {
@@ -72,7 +74,10 @@ const Map = ({
     setUserLocation: setUserLocationStore, 
     trackedVehicle, 
     setTrackedVehicle,
-    setMapInstance: setMapInstanceStore 
+    setMapInstance: setMapInstanceStore,
+    selectedLocations,
+    searchResult,
+    setSearchResult
   } = useMapStore();
 
   useEffect(() => {
@@ -2086,6 +2091,24 @@ const Map = ({
           </div>
         )}
       </div>
+      {selectedLocations.map((location) => (
+        <LocationMarker
+          key={location.properties.mapbox_id}
+          location={location}
+          onClick={(data) => setSearchResult(data)}
+          isSelected={
+            searchResult?.properties.mapbox_id ===
+            location.properties.mapbox_id
+          }
+        />
+      ))}
+
+      {searchResult && (
+        <LocationPopup
+          location={searchResult}
+          onClose={() => setSearchResult(null)}
+        />
+      )}
     </MapContext.Provider>
   );
 };

@@ -32,14 +32,19 @@ interface MapSearchProps {
 
 export default function MapSearch({ onGetDirections, onClear, onSelect, className }: MapSearchProps) {
   const { map: contextMap } = useMap();
-  const { mapInstance: storeMap } = useMapStore();
+  const { 
+    mapInstance: storeMap, 
+    selectedLocations, 
+    setSelectedLocations,
+    searchResult,
+    setSearchResult 
+  } = useMapStore();
+  
   const map = contextMap || storeMap;
   
   const [query, setQuery] = useState("");
   const [displayValue, setDisplayValue] = useState("");
   const [isOpen, setIsOpen] = useState(false);
-  const [selectedLocation, setSelectedLocation] = useState<LocationFeature | null>(null);
-  const [selectedLocations, setSelectedLocations] = useState<LocationFeature[]>([]);
   const [isRetrieving, setIsRetrieving] = useState(false);
 
   const debouncedQuery = useDebounce(query, MAP_CONSTANTS.SEARCH.DEBOUNCE_MS);
@@ -93,7 +98,7 @@ export default function MapSearch({ onGetDirections, onClear, onSelect, classNam
 
         setDisplayValue(suggestion.name);
         setSelectedLocations(features);
-        setSelectedLocation(feature);
+        setSearchResult(feature);
         setIsOpen(false);
         
         // Trigger onSelect callback if provided
@@ -114,12 +119,12 @@ export default function MapSearch({ onGetDirections, onClear, onSelect, classNam
     setQuery("");
     setDisplayValue("");
     setIsOpen(false);
-    setSelectedLocation(null);
+    setSearchResult(null);
     setSelectedLocations([]);
     
     // Call onClear callback to reset map
     onClear?.();
-  }, [onClear]);
+  }, [onClear, setSearchResult, setSelectedLocations]);
 
   const hasResults = results.length > 0;
   const showEmptyState =
@@ -211,26 +216,6 @@ export default function MapSearch({ onGetDirections, onClear, onSelect, classNam
           )}
         </Command>
       </section>
-
-      {selectedLocations.map((location) => (
-        <LocationMarker
-          key={location.properties.mapbox_id}
-          location={location}
-          onClick={(data) => setSelectedLocation(data)}
-          isSelected={
-            selectedLocation?.properties.mapbox_id ===
-            location.properties.mapbox_id
-          }
-        />
-      ))}
-
-      {selectedLocation && (
-        <LocationPopup
-          location={selectedLocation}
-          onGetDirections={onGetDirections}
-          onClose={() => setSelectedLocation(null)}
-        />
-      )}
     </>
   );
 }
