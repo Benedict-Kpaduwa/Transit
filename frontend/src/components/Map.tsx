@@ -68,7 +68,21 @@ const Map = ({
   const [locationError, setLocationError] = useState<string | null>(null);
 
   // Get store values
-  const { setUserLocation: setUserLocationStore, trackedVehicle, setTrackedVehicle } = useMapStore();
+  const { 
+    setUserLocation: setUserLocationStore, 
+    trackedVehicle, 
+    setTrackedVehicle,
+    setMapInstance: setMapInstanceStore 
+  } = useMapStore();
+
+  useEffect(() => {
+    if (mapInstance) {
+      setMapInstanceStore(mapInstance);
+    }
+    return () => {
+      setMapInstanceStore(null);
+    };
+  }, [mapInstance, setMapInstanceStore]);
 
   // Sync local user location to store
   const setUserLocation = useCallback(

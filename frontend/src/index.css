@@ -322,3 +322,17 @@
   /* Apply the reveal animation */
   animation: reveal 0.4s ease-in-out forwards;
 }
+
+/* Bouncing Location Marker */
+@keyframes location-bounce {
+  0%, 100% {
+    transform: translateY(0) scale(1.1);
+  }
+  50% {
+    transform: translateY(-8px) scale(1.1);
+  }
+}
+
+.animate-location-bounce {
+  animation: location-bounce 1s ease-in-out infinite;
+}

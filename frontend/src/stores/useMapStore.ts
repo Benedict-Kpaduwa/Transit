@@ -40,6 +40,9 @@ interface MapStore {
   mobileView: "home" | "map";
   setMobileView: (view: "home" | "map") => void;
   resetMapToggles: () => void;
+  // Global Map Instance access
+  mapInstance: mapboxgl.Map | null;
+  setMapInstance: (map: mapboxgl.Map | null) => void;
 }
 
 export const useMapStore = create<MapStore>((set) => ({
@@ -71,4 +74,6 @@ export const useMapStore = create<MapStore>((set) => ({
     trackedVehicle: null,
     focusedVehicle: null
   }),
+  mapInstance: null,
+  setMapInstance: (map) => set({ mapInstance: map }),
 }));

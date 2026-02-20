@@ -4,7 +4,7 @@ import { useMapStore } from "@/stores/useMapStore";
 import { useAllStationsByLineSorted } from "@/hooks/queries";
 import { useNearbyArrivals, formatArrivalTime, getArrivalUrgencyColor } from "@/hooks/useArrivals";
 import { cn } from "@/lib/utils";
-import { Input } from "@/components/ui/input";
+import MapSearch from "@/components/map/map-search";
 
 export function MobileDashboard() {
   const { 
@@ -21,10 +21,6 @@ export function MobileDashboard() {
     setShowTrainLines
   } = useMapStore();
   const { data: stations } = useAllStationsByLineSorted();
-  const [searchQuery, setSearchQuery] = React.useState("");
-
-  const filteredRed = stations?.red.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? [];
-  const filteredBlue = stations?.blue.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())) ?? [];
 
   const { data: nearbyCTrains } = useNearbyArrivals(userLocation, {
     radius: 2000,
@@ -34,54 +30,15 @@ export function MobileDashboard() {
     enabled: !!userLocation,
   });
 
-  const handleStationSelect = (station: any) => {
-    setSelectedStation(station);
-    setMobileView("map");
-  };
-
   return (
     <div className="flex flex-col min-h-screen bg-zinc-950 text-white pb-10">
       {/* Header / Search */}
       <div className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-900 p-5 pt-8">
-        <h1 className="text-2xl font-black mb-4 tracking-tight">Where to?</h1>
-        <div className="relative group">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 size-5 text-zinc-500 group-focus-within:text-blue-500 transition-colors" />
-          <Input
-            type="text"
-            placeholder="Search stations or places..."
-            className="w-full bg-zinc-900 border-zinc-800 pl-12 h-14 rounded-2xl text-lg focus:ring-2 focus:ring-blue-500/20"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-
-          {/* Search Dropdown */}
-          {searchQuery && (filteredRed.length > 0 || filteredBlue.length > 0) && (
-            <div className="absolute top-full left-0 right-0 mt-3 bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-              <div className="p-2">
-                {[...filteredRed, ...filteredBlue].slice(0, 6).map((station, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleStationSelect(station)}
-                    className="w-full flex items-center gap-4 px-4 py-4 rounded-2xl hover:bg-zinc-800 transition-colors text-left"
-                  >
-                    <div className={cn(
-                      "size-10 rounded-xl flex items-center justify-center shrink-0",
-                      stations?.red.includes(station) ? "bg-red-500/10 text-red-500" : "bg-blue-500/10 text-blue-500"
-                    )}>
-                      <Train className="size-5" />
-                    </div>
-                    <div>
-                      <p className="font-bold text-zinc-100">{station.name}</p>
-                      <p className="text-xs text-zinc-500 uppercase font-bold tracking-wider">
-                        {stations?.red.includes(station) ? "Red Line" : "Blue Line"} Station
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        <h1 className="text-2xl font-black mb-1 tracking-tight">Where to?</h1>
+        <MapSearch 
+          onSelect={() => setMobileView("map")}
+          className="w-full static shadow-none border border-zinc-900 rounded-2xl overflow-hidden mt-4" 
+        />
       </div>
 
       <div className="p-5 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">

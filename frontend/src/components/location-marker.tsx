@@ -26,7 +26,7 @@ export function LocationMarker({
       <div
         className={`rounded-full flex items-center justify-center transform transition-all duration-200 text-white shadow-lg size-9 cursor-pointer hover:scale-110 ${
           isSelected
-            ? "bg-blue-500 ring-4 ring-blue-500/30 scale-110"
+            ? "bg-blue-500 ring-4 ring-blue-500/30 scale-110 animate-location-bounce"
             : "bg-rose-500 hover:bg-rose-600"
         }`}
       >

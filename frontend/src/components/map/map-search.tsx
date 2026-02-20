@@ -17,6 +17,7 @@ import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 import { LocationMarker } from "../location-marker";
 import { LocationPopup } from "../location-popup";
 import { useLocationSearch, useRetrieveLocationMutation } from "@/hooks/useMapboxSearch";
+import { useMapStore } from "@/stores/useMapStore";
 
 interface MapSearchProps {
   onGetDirections?: (destination: {
@@ -25,10 +26,15 @@ interface MapSearchProps {
     coordinates: [number, number];
   }) => void;
   onClear?: () => void;
+  onSelect?: (location: LocationFeature) => void;
+  className?: string;
 }
 
-export default function MapSearch({ onGetDirections, onClear }: MapSearchProps) {
-  const { map } = useMap();
+export default function MapSearch({ onGetDirections, onClear, onSelect, className }: MapSearchProps) {
+  const { map: contextMap } = useMap();
+  const { mapInstance: storeMap } = useMapStore();
+  const map = contextMap || storeMap;
+  
   const [query, setQuery] = useState("");
   const [displayValue, setDisplayValue] = useState("");
   const [isOpen, setIsOpen] = useState(false);
@@ -87,7 +93,13 @@ export default function MapSearch({ onGetDirections, onClear }: MapSearchProps) 
 
         setDisplayValue(suggestion.name);
         setSelectedLocations(features);
+        setSelectedLocation(feature);
         setIsOpen(false);
+        
+        // Trigger onSelect callback if provided
+        if (onSelect) {
+          onSelect(feature);
+        }
       } catch (err) {
         console.error("Retrieve error:", err);
       } finally {
@@ -116,7 +128,7 @@ export default function MapSearch({ onGetDirections, onClear }: MapSearchProps) 
 
   return (
     <>
-      <section className="absolute top-16 left-1/2 -translate-x-1/2 z-10 w-[90vw] sm:w-[400px] rounded-lg shadow-lg">
+      <section className={cn("z-10", className || "absolute top-16 left-1/2 -translate-x-1/2 w-[90vw] sm:w-[400px] rounded-lg shadow-lg")}>
         <Command className="rounded-lg">
           <div
             className={cn(
