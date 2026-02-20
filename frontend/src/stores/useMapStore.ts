@@ -78,7 +78,9 @@ export const useMapStore = create<MapStore>((set) => ({
     showTrainLines: false,
     selectedStation: null,
     trackedVehicle: null,
-    focusedVehicle: null
+    focusedVehicle: null,
+    searchResult: null,
+    selectedLocations: []
   }),
   mapInstance: null,
   setMapInstance: (map) => set({ mapInstance: map }),

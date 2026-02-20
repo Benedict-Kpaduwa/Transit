@@ -112,7 +112,7 @@ const CalgaryMap = () => {
 
       {/* Mobile Dashboard - Rendered on top of map when in 'home' view */}
       {isMobile && mobileView === "home" && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black">
+        <div className="fixed inset-0 z-50 overflow-y-auto overflow-x-hidden bg-black">
           <MobileDashboard />
         </div>
       )}

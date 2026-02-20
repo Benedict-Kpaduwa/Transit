@@ -31,7 +31,7 @@ export function MobileDashboard() {
   });
 
   return (
-    <div className="flex flex-col min-h-screen bg-zinc-950 text-white pb-10">
+    <div className="flex flex-col min-h-screen bg-zinc-950 text-white pb-10 overflow-x-hidden">
       {/* Header / Search */}
       <div className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-900 p-5 pt-8">
         <h1 className="text-2xl font-black mb-1 tracking-tight">Where to?</h1>
