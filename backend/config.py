@@ -28,7 +28,6 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-# Print configuration status on startup
 def print_config_status():
     """Print configuration status"""
     print("=" * 50)
