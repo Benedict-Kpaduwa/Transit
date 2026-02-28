@@ -72,7 +72,7 @@ async def startup():
             print(f"GTFS loading error: {e}")
 
     asyncio.create_task(load_gtfs_background())
-    print("✅ API started! GTFS data loading in background...")
+    print("API started! GTFS data loading in background...")
 
 
 
