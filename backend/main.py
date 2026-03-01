@@ -87,7 +87,6 @@ async def root():
             "stop_arrivals": "/arrivals/{stop_id}",
             "nearby_arrivals": "/arrivals/nearby",
             "station_arrivals": "/arrivals/station/{station_name}",
-            # Vehicle tracking
             "ctrains": "/vehicles/ctrains",
             "buses": "/vehicles/buses",
             # Trip planning
