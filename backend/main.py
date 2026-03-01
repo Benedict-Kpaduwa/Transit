@@ -84,7 +84,6 @@ async def root():
         "version": "3.0.0",
         "status": "ready" if is_loaded() else "loading",
         "endpoints": {
-            # Real-time arrivals
             "stop_arrivals": "/arrivals/{stop_id}",
             "nearby_arrivals": "/arrivals/nearby",
             "station_arrivals": "/arrivals/station/{station_name}",
