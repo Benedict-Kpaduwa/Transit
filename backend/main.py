@@ -227,7 +227,6 @@ async def get_ctrains(
         vehicles = []
         data_source = None
         
-        # Try GPS positions first
         if use_gps:
             vehicles = await get_vehicle_positions(vehicle_type="CTrain", line=line)
             if vehicles:
