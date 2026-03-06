@@ -232,7 +232,6 @@ async def get_ctrains(
             if vehicles:
                 data_source = "gps"
         
-        # Fallback to interpolated positions
         if not vehicles and use_interpolated:
             vehicles = await get_interpolated_ctrain_positions(line=line)
             data_source = "interpolated"
