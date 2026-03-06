@@ -9,8 +9,8 @@ class Settings(BaseSettings):
 
     calgary_app_token: Optional[str] = None
     mapbox_access_token: Optional[str] = None
-    transit_api_key: Optional[str] = None  # Transit app API key for trip planning
-    google_api_key: Optional[str] = None  # Google Directions API key
+    transit_api_key: Optional[str] = None 
+    google_api_key: Optional[str] = None
 
     lrt_routes_new_api: str = (
         "https://data.calgary.ca/api/v3/views/2axz-xm4q/query.json"
