@@ -16,7 +16,6 @@ class Settings(BaseSettings):
         "https://data.calgary.ca/api/v3/views/2axz-xm4q/query.json"
     )
 
-    # Other settings
     debug: bool = False
 
     class Config:
