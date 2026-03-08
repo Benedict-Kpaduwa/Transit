@@ -24,7 +24,6 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
 
 
-# Create global settings instance
 settings = Settings()
 
 
