@@ -50,5 +50,4 @@ def print_config_status():
         print("Create a .env file with MAPBOX_ACCESS_TOKEN=your_token_here")
 
 
-# Print status when module is loaded
 print_config_status()
