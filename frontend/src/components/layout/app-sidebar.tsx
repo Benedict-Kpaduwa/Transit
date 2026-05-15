@@ -24,7 +24,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useAllStationsByLineSorted } from "@/hooks/queries";
+import { useAllStationsByLineSorted, useBusPositions } from "@/hooks/queries";
 import { useMapStore } from "@/stores/useMapStore";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/stores/use-theme-store";
@@ -238,11 +238,18 @@ const AppSidebar = () => {
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
   const { data: stations } = useAllStationsByLineSorted();
-  const { setSelectedStation, userLocation, setTrackedVehicle, setShowLiveBuses, setShowLiveTrains } = useMapStore();
+  const { setSelectedStation, userLocation, setTrackedVehicle, setShowLiveBuses, setShowLiveTrains, mapInstance } = useMapStore();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSection, setActiveSection] = useState<"red" | "blue" | null>(
     "red"
   );
+
+  // Always keep bus positions fetched in the background so we have GPS
+  // coordinates ready when the user clicks a nearby bus departure.
+  const { data: liveBusData } = useBusPositions(undefined, {
+    refetchInterval: 10000,
+    enabled: true,
+  });
 
   // Filter stations based on search
   const filteredRed =
@@ -517,8 +524,8 @@ const AppSidebar = () => {
               userLocation={userLocation} 
               vehicleType="Bus"
               onArrivalClick={(arrival) => {
-                // Turn off all live vehicle toggles - only show the tracked vehicle
-                setShowLiveBuses(false);
+                // Enable live buses so the tracked bus marker is rendered on the map
+                setShowLiveBuses(true);
                 setShowLiveTrains(false);
                 setTrackedVehicle({
                   tripId: arrival.trip_id,
@@ -529,6 +536,29 @@ const AppSidebar = () => {
                   headsign: arrival.headsign,
                   color: arrival.color || "#22c55e",
                 });
+
+                // Immediately fly to the bus using live GPS position.
+                // Cross-reference the arrival's trip_id / vehicle_id against
+                // the live vehicle feed which carries actual coordinates.
+                const buses = liveBusData?.vehicles ?? [];
+                const match =
+                  buses.find((b) => b.trip_id === arrival.trip_id) ||
+                  buses.find(
+                    (b) =>
+                      arrival.vehicle_id &&
+                      b.vehicle_id === arrival.vehicle_id
+                  );
+
+                if (match?.position?.longitude && match?.position?.latitude && mapInstance) {
+                  mapInstance.flyTo({
+                    center: [match.position.longitude, match.position.latitude],
+                    zoom: 16,
+                    pitch: 60,
+                    speed: 1.4,
+                    curve: 1.42,
+                    essential: true,
+                  });
+                }
               }}
             />
           </div>
