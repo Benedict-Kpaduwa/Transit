@@ -133,7 +133,7 @@ export default function MapSearch({ onGetDirections, onClear, onSelect, classNam
 
   return (
     <>
-      <section className={cn("z-10", className || "absolute top-16 left-1/2 -translate-x-1/2 w-[90vw] sm:w-[400px] rounded-lg shadow-lg")}>
+      <section className={cn("z-10", className || "absolute top-4 left-1/2 -translate-x-1/2 w-[min(90vw,440px)] rounded-lg shadow-lg")}>
         <Command className="rounded-lg">
           <div
             className={cn(

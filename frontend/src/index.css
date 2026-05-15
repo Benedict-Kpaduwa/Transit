@@ -146,6 +146,14 @@
   }
 }
 
+/* Full-viewport containment — prevents layout distortion on all desktop screen sizes */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
 .train-marker {
   width: 24px;
   height: 24px;

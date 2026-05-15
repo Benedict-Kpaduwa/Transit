@@ -1725,8 +1725,8 @@ const Map = ({
 
   return (
     <MapContext.Provider value={{ map: mapInstance }}>
-      <div className="flex-1 h-full relative bg-black overflow-hidden">
-        <div ref={mapContainerRef} className="w-full h-full" />
+      <div className="flex-1 h-full w-full relative bg-black overflow-hidden">
+        <div ref={mapContainerRef} className="absolute inset-0 w-full h-full" />
 
         {/* Vehicle Markers - Render when live trains/buses is enabled OR when tracking any vehicle */}
         {/* Vehicle Markers - Render when live trains/buses is enabled OR when tracking any vehicle */}
@@ -2009,7 +2009,7 @@ const Map = ({
 
         {/* Selected Station Info Panel */}
         {selectedStation && (
-          <div className="absolute bottom-9 right-24 bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-5 min-w-[280px] shadow-2xl z-20">
+          <div className="absolute bottom-8 right-20 lg:right-24 bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-5 w-[min(280px,calc(100vw-8rem))] max-w-xs shadow-2xl z-20">
             <button
               onClick={handleCloseStationInfoWithReset}
               className="absolute top-4 right-3 text-zinc-500 hover:text-zinc-300 transition-colors"

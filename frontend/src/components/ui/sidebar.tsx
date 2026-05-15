@@ -95,7 +95,7 @@ export function SidebarProvider({
               "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
             } as React.CSSProperties
           }
-          className={cn("flex min-h-screen w-full bg-[#0a0a0a]", className)}
+          className={cn("flex h-screen w-full overflow-hidden bg-[#0a0a0a]", className)}
         >
           {children}
         </div>

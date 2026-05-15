@@ -93,7 +93,7 @@ const CalgaryMap = () => {
   }
 
   return (
-    <div className="relative flex flex-col lg:flex-row min-h-screen bg-linear-to-br from-gray-900 via-black to-gray-900 overflow-hidden">
+    <div className="relative flex flex-col lg:flex-row h-screen bg-linear-to-br from-gray-900 via-black to-gray-900 overflow-hidden">
       {/* Background patterns */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-1 bg-linear-to-r from-transparent via-blue-500/20 to-transparent animate-pulse"></div>
@@ -153,9 +153,9 @@ const CalgaryMap = () => {
         </div>
       )}
 
-      <div className="flex-1 relative min-h-[70vh] lg:min-h-screen">
+      <div className="flex-1 relative min-h-0 h-full">
         {!isMobile && (
-          <div className="absolute top-4 left-4 right-4 lg:right-auto lg:left-6 lg:top-6 flex flex-col sm:flex-row gap-3 z-10">
+          <div className="absolute top-4 left-4 lg:left-6 lg:top-6 flex flex-col sm:flex-row gap-3 z-10">
             <div className="bg-zinc-950/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-3 sm:p-4 shadow-2xl flex items-center gap-4 sm:gap-6">
               <div className="flex items-center gap-3 sm:gap-4">
                 <div className="flex items-center gap-2 sm:gap-3">

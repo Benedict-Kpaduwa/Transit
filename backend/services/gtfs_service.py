@@ -57,6 +57,9 @@ _realtime_cache: Dict[str, Any] = {
     "trip_updates": [],
     "trip_updates_by_stop": {},
     "trip_updates_by_trip": {},
+    # Maps RT trip_id -> route_short_name (built from trip updates feed,
+    # since vehicle positions feed doesn't include route_id)
+    "rt_trip_to_route_short_name": {},
     "last_fetch": None,
     "cache_duration": 30,  # seconds
 }
@@ -253,7 +256,12 @@ def load_gtfs_static() -> bool:
 
 
 async def fetch_vehicle_positions() -> List[Dict]:
-    """Fetch real-time vehicle positions from GTFS-RT"""
+    """Fetch real-time vehicle positions from GTFS-RT.
+    
+    Note: Calgary Transit's GTFS-RT vehicle positions feed does NOT include route_id.
+    We cross-reference the trip updates feed (via _realtime_cache['rt_trip_to_route_short_name'])
+    to resolve route info for each vehicle.
+    """
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(VEHICLE_POSITIONS_URL)
@@ -265,31 +273,41 @@ async def fetch_vehicle_positions() -> List[Dict]:
             feed = gtfs_realtime_pb2.FeedMessage()
             feed.ParseFromString(response.content)
 
+            # Get the cross-feed trip->route mapping built from trip updates
+            rt_trip_to_route = _realtime_cache.get("rt_trip_to_route_short_name", {})
+
             vehicles = []
             for entity in feed.entity:
                 if entity.HasField("vehicle"):
                     v = entity.vehicle
 
-                    # Get route info
                     trip_id = v.trip.trip_id if v.HasField("trip") else None
+                    # route_id from the vehicle feed is always empty for Calgary Transit
                     route_id = v.trip.route_id if v.HasField("trip") else None
 
-                    # If no route_id in vehicle, try to get from trip lookup
-                    if (
-                        not route_id
-                        and trip_id
-                        and trip_id in _gtfs_cache.get("trip_by_id", {})
-                    ):
-                        route_id = _gtfs_cache["trip_by_id"][trip_id].get("route_id")
+                    route_info = {}
 
-                    # Get route info - try by ID first, then by short name
-                    route_info = _gtfs_cache.get("route_by_id", {}).get(
-                        str(route_id), {}
-                    )
-                    if not route_info:
-                        route_info = _gtfs_cache.get("route_by_short_name", {}).get(
-                            str(route_id), {}
-                        )
+                    # Strategy 1: try the route_id from the vehicle feed directly
+                    if route_id:
+                        route_info = _gtfs_cache.get("route_by_id", {}).get(str(route_id), {})
+                        if not route_info:
+                            route_info = _gtfs_cache.get("route_by_short_name", {}).get(str(route_id), {})
+
+                    # Strategy 2: cross-reference the trip updates feed which has route_id
+                    if not route_info and trip_id and trip_id in rt_trip_to_route:
+                        route_short = rt_trip_to_route[trip_id]
+                        route_info = _gtfs_cache.get("route_by_short_name", {}).get(str(route_short), {})
+                        if route_info:
+                            route_id = route_short  # use the resolved short name
+
+                    # Strategy 3: fall back to static GTFS trip lookup (for older schedules)
+                    if not route_info and trip_id:
+                        static_trip = _gtfs_cache.get("trip_by_id", {}).get(str(trip_id), {})
+                        if static_trip:
+                            static_route_id = static_trip.get("route_id", "")
+                            route_info = _gtfs_cache.get("route_by_id", {}).get(str(static_route_id), {})
+                            if route_info:
+                                route_id = static_route_id
 
                     vehicles.append(
                         {
@@ -302,9 +320,7 @@ async def fetch_vehicle_positions() -> List[Dict]:
                             "vehicle_type": route_info.get("vehicle_type", "Unknown"),
                             "line": route_info.get("line"),
                             "color": route_info.get("color"),
-                            "headsign": _gtfs_cache.get("trip_by_id", {})
-                            .get(trip_id, {})
-                            .get("trip_headsign"),
+                            "headsign": route_info.get("headsign"),  # from trip update
                             "position": {
                                 "latitude": (
                                     v.position.latitude
@@ -484,16 +500,30 @@ async def refresh_realtime_data() -> None:
 
     print("🔄 Refreshing real-time data...")
 
-    # Fetch both in parallel
-    vehicles, updates = await asyncio.gather(
-        fetch_vehicle_positions(), fetch_trip_updates()
-    )
+    # Step 1: Fetch trip updates FIRST so we can build the trip->route mapping
+    # that fetch_vehicle_positions depends on.
+    updates = await fetch_trip_updates()
+
+    # Build trip_id -> route_short_name mapping from trip updates.
+    # Calgary Transit's vehicle positions feed omits route_id, but the trip
+    # updates feed includes it as the route short name (e.g. "32", "201").
+    rt_trip_to_route: Dict[str, str] = {}
+    for update in updates:
+        trip_id = update.get("trip_id")
+        route_id = update.get("route_id")  # This is actually route_short_name in the RT feed
+        if trip_id and route_id:
+            rt_trip_to_route[trip_id] = str(route_id)
+
+    _realtime_cache["rt_trip_to_route_short_name"] = rt_trip_to_route
+
+    # Step 2: Now fetch vehicle positions (uses the mapping we just built)
+    vehicles = await fetch_vehicle_positions()
 
     _realtime_cache["vehicle_positions"] = vehicles
     _realtime_cache["trip_updates"] = updates
     _realtime_cache["last_fetch"] = now
 
-    # Build lookup by stop
+    # Build lookup by stop and by trip
     _realtime_cache["trip_updates_by_stop"] = {}
     _realtime_cache["trip_updates_by_trip"] = {}
 
@@ -521,8 +551,15 @@ async def refresh_realtime_data() -> None:
                     }
                 )
 
+    # Count vehicles by type for diagnostics
+    type_counts: Dict[str, int] = {}
+    for v in vehicles:
+        vt = v.get("vehicle_type", "Unknown")
+        type_counts[vt] = type_counts.get(vt, 0) + 1
+
     print(
-        f"✅ Real-time data refreshed: {len(vehicles)} vehicles, {len(updates)} trip updates"
+        f"✅ Real-time data refreshed: {len(vehicles)} vehicles {type_counts}, "
+        f"{len(updates)} trip updates, {len(rt_trip_to_route)} trip->route mappings"
     )
 
 

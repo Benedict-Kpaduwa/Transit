@@ -18,13 +18,13 @@ const AppContent = ({
     return (
       <main
         className={cn(
-          "relative flex min-h-screen flex-1 flex-col overflow-hidden transition-all duration-300 ease-in-out",
+          "relative flex h-full flex-1 flex-col overflow-hidden transition-all duration-300 ease-in-out",
           "bg-slate-50 dark:bg-slate-950",
           className
         )}
         {...props}
       >
-        <div className="flex flex-1 flex-col">{children}</div>
+        <div className="flex h-full flex-1 flex-col">{children}</div>
       </main>
     );
   }
