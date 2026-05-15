@@ -298,16 +298,18 @@ const Map = ({
     // If tracking a specific train, ONLY show that train - ignore showLiveTrains toggle
     if (isTrackingTrain && trackedTrainPosition) {
       vehicles.push(trackedTrainPosition);
-    } else if (showLiveTrains && !isTrackingBus) {
-      // Only show all trains if NOT tracking a specific vehicle
+    } else if (showLiveTrains && !isTrackingBus && !isTrackingTrain) {
+      // Only show all trains when NOT in any tracking mode
       vehicles.push(...transformedRedTrains, ...transformedBlueTrains);
     }
     
     // If tracking a specific bus, ONLY show that bus - ignore showLiveBuses toggle
+    // If the bus hasn't appeared in the live feed yet (trackedBusPosition=null),
+    // show nothing rather than falling through to show ALL buses.
     if (isTrackingBus && trackedBusPosition) {
       vehicles.push(trackedBusPosition);
-    } else if (showLiveBuses && !isTrackingTrain) {
-      // Only show all buses if NOT tracking a specific vehicle
+    } else if (showLiveBuses && !isTrackingBus && !isTrackingTrain) {
+      // Only show all buses when NOT in any tracking mode
       vehicles.push(...transformedBuses);
     }
     

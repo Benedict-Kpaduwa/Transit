@@ -524,39 +524,54 @@ const AppSidebar = () => {
               userLocation={userLocation} 
               vehicleType="Bus"
               onArrivalClick={(arrival) => {
-                // Enable live buses so the tracked bus marker is rendered on the map
-                setShowLiveBuses(true);
-                setShowLiveTrains(false);
-                setTrackedVehicle({
-                  tripId: arrival.trip_id,
-                  vehicleId: arrival.vehicle_id,
-                  vehicleType: "Bus",
-                  routeId: arrival.route_id,
-                  routeShortName: arrival.route_short_name,
-                  headsign: arrival.headsign,
-                  color: arrival.color || "#22c55e",
-                });
-
-                // Immediately fly to the bus using live GPS position.
                 // Cross-reference the arrival's trip_id / vehicle_id against
-                // the live vehicle feed which carries actual coordinates.
+                // the live vehicle feed which carries actual GPS coordinates.
                 const buses = liveBusData?.vehicles ?? [];
                 const match =
                   buses.find((b) => b.trip_id === arrival.trip_id) ||
                   buses.find(
                     (b) =>
-                      arrival.vehicle_id &&
+                      arrival.vehicle_id != null &&
                       b.vehicle_id === arrival.vehicle_id
                   );
 
-                if (match?.position?.longitude && match?.position?.latitude && mapInstance) {
-                  mapInstance.flyTo({
-                    center: [match.position.longitude, match.position.latitude],
-                    zoom: 16,
-                    pitch: 60,
-                    speed: 1.4,
-                    curve: 1.42,
-                    essential: true,
+                setShowLiveTrains(false);
+
+                if (match?.position?.longitude && match?.position?.latitude) {
+                  // Bus is in the live feed — enable it, track it, and fly to it
+                  setShowLiveBuses(true);
+                  setTrackedVehicle({
+                    tripId: arrival.trip_id,
+                    vehicleId: arrival.vehicle_id,
+                    vehicleType: "Bus",
+                    routeId: arrival.route_id,
+                    routeShortName: arrival.route_short_name,
+                    headsign: arrival.headsign,
+                    color: arrival.color || "#22c55e",
+                  });
+                  if (mapInstance) {
+                    mapInstance.flyTo({
+                      center: [match.position.longitude, match.position.latitude],
+                      zoom: 16,
+                      pitch: 60,
+                      speed: 1.4,
+                      curve: 1.42,
+                      essential: true,
+                    });
+                  }
+                } else {
+                  // Bus not yet in live feed (future arrival) — don't change
+                  // map state to avoid accidentally showing all buses.
+                  // Just record the tracked vehicle for when it appears.
+                  setShowLiveBuses(false);
+                  setTrackedVehicle({
+                    tripId: arrival.trip_id,
+                    vehicleId: arrival.vehicle_id,
+                    vehicleType: "Bus",
+                    routeId: arrival.route_id,
+                    routeShortName: arrival.route_short_name,
+                    headsign: arrival.headsign,
+                    color: arrival.color || "#22c55e",
                   });
                 }
               }}
