@@ -1,4 +1,4 @@
-import { useMemo, useEffect } from "react";
+import { useMemo, useEffect, useCallback } from "react";
 import Map from "@/components/Map";
 import { Train, RefreshCw, MapPin, Menu, ArrowLeft, Navigation } from "lucide-react";
 import SplashScreen from "@/components/shared/splash-screen";
@@ -7,6 +7,8 @@ import { useAllRouteLines, useAllStationsByLineSorted } from "@/hooks/queries";
 import { useMapStore } from "@/stores/useMapStore";
 import { useSidebar } from "@/components/ui/sidebar";
 import { MobileDashboard } from "@/components/mobile-dashboard";
+import MapSearch from "@/components/map/map-search";
+import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 import type { Station } from "@/types";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -29,17 +31,32 @@ const CalgaryMap = () => {
   const isLoading = stationsLoading || routeLinesLoading;
   const isRefreshing = stationsFetching || routeLinesFetching;
 
-  const { 
-    selectedStation, 
-    setSelectedStation, 
-    mobileView, 
+  const {
+    selectedStation,
+    setSelectedStation,
+    mobileView,
     setMobileView,
     trackedVehicle,
     showLiveBuses,
     showLiveTrains,
-    resetMapToggles
+    resetMapToggles,
+    mapInstance,
+    setShowTrainLines,
   } = useMapStore();
   const { toggleSidebar } = useSidebar();
+
+  const handleClearSearch = useCallback(() => {
+    setShowTrainLines(false);
+    mapInstance?.flyTo({
+      center: MAP_CONSTANTS.CENTER,
+      zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
+      pitch: MAP_CONSTANTS.DEFAULT_PITCH,
+      bearing: 0,
+      speed: 1.2,
+      curve: 1.42,
+      essential: true,
+    });
+  }, [mapInstance, setShowTrainLines]);
 
   // Auto-switch to map view if something is selected/tracked
   useEffect(() => {
@@ -155,7 +172,7 @@ const CalgaryMap = () => {
 
       <div className="flex-1 relative min-h-0 h-full">
         {!isMobile && (
-          <div className="absolute top-4 left-4 xl:left-6 xl:top-6 flex gap-3 z-10 max-w-[calc(100%-7rem)]">
+          <div className="absolute top-4 left-4 xl:left-6 xl:top-6 flex flex-col gap-2 z-10">
             <div className="bg-zinc-950/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-2.5 lg:p-3 xl:p-4 shadow-2xl flex items-center gap-3 lg:gap-4 xl:gap-6">
               <div className="flex items-center gap-2.5 lg:gap-3 xl:gap-4">
                 <div className="flex items-center gap-2 lg:gap-2.5 xl:gap-3">
@@ -203,6 +220,10 @@ const CalgaryMap = () => {
                 </button>
               </div>
             </div>
+            <MapSearch
+              onClear={handleClearSearch}
+              className="w-full rounded-lg shadow-lg"
+            />
           </div>
         )}
 

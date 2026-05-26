@@ -17,7 +17,6 @@ import {
   Train,
 } from "lucide-react";
 import { MapContext } from "@/context/map-context";
-import MapSearch from "@/components/map/map-search";
 import MapStyles from "@/components/map/map-styles";
 import MapControls from "@/components/map/map-controls";
 import VehicleLayer, {
@@ -1504,37 +1503,6 @@ const Map = ({
     }
   }, []);
 
-  // Handle "Get Directions" from search result popup
-  const handleGetDirections = useCallback(
-    (destination: {
-      name: string;
-      address: string;
-      coordinates: [number, number];
-    }) => {
-      setExternalDestination(destination);
-    },
-    []
-  );
-
-  // Handle clearing search - reset map to original view
-  const handleClearSearch = useCallback(() => {
-    // Hide train lines (reset to default)
-    setShowTrainLines(false);
-    
-    // Reset map view to original position
-    if (mapRef.current) {
-      mapRef.current.flyTo({
-        center: MAP_CONSTANTS.CENTER,
-        zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
-        pitch: MAP_CONSTANTS.DEFAULT_PITCH,
-        bearing: 0,
-        speed: 1.2,
-        curve: 1.42,
-        essential: true,
-      });
-    }
-  }, []);
-
   // Clear external destination after it's consumed by TripPlanner
   const handleClearExternalDestination = useCallback(() => {
     setExternalDestination(null);
@@ -1751,9 +1719,6 @@ const Map = ({
             />
           </ErrorBoundary>
         )}
-
-        {/* On mobile, we hide these components to keep the map view clean and unfettered */}
-        {!isMobile && mapLoaded && <MapSearch onGetDirections={handleGetDirections} onClear={handleClearSearch} />}
 
         {/* Station Search - top left */}
         {/* {mapLoaded && (
