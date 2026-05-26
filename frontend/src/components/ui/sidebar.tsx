@@ -16,7 +16,6 @@ import {
   TooltipTrigger,
 } from "./tooltip";
 
-const SIDEBAR_WIDTH = "20rem";
 const SIDEBAR_WIDTH_ICON = "4.5rem";
 
 type SidebarContextProps = {
@@ -91,7 +90,6 @@ export function SidebarProvider({
         <div
           style={
             {
-              "--sidebar-width": SIDEBAR_WIDTH,
               "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
             } as React.CSSProperties
           }
@@ -117,7 +115,7 @@ export function Sidebar({ children, className }: React.ComponentProps<"div">) {
       className={cn(
         "group sticky top-0 z-20 hidden h-screen transition-[width] duration-300 ease-in-out md:block shrink-0",
         state === "expanded"
-          ? "w-(--sidebar-width)"
+          ? "md:w-64 lg:w-72 xl:w-80 2xl:w-[22rem]"
           : "w-(--sidebar-width-icon)",
         className
       )}

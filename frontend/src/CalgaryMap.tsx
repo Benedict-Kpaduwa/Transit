@@ -93,7 +93,7 @@ const CalgaryMap = () => {
   }
 
   return (
-    <div className="relative flex flex-col lg:flex-row h-screen bg-linear-to-br from-gray-900 via-black to-gray-900 overflow-hidden">
+    <div className="relative flex h-screen w-full bg-linear-to-br from-gray-900 via-black to-gray-900 overflow-hidden">
       {/* Background patterns */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-1 bg-linear-to-r from-transparent via-blue-500/20 to-transparent animate-pulse"></div>
@@ -155,34 +155,34 @@ const CalgaryMap = () => {
 
       <div className="flex-1 relative min-h-0 h-full">
         {!isMobile && (
-          <div className="absolute top-4 left-4 lg:left-6 lg:top-6 flex flex-col sm:flex-row gap-3 z-10">
-            <div className="bg-zinc-950/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-3 sm:p-4 shadow-2xl flex items-center gap-4 sm:gap-6">
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div className="flex items-center gap-2 sm:gap-3">
+          <div className="absolute top-4 left-4 xl:left-6 xl:top-6 flex gap-3 z-10 max-w-[calc(100%-7rem)]">
+            <div className="bg-zinc-950/90 backdrop-blur-xl border border-zinc-800 rounded-2xl p-2.5 lg:p-3 xl:p-4 shadow-2xl flex items-center gap-3 lg:gap-4 xl:gap-6">
+              <div className="flex items-center gap-2.5 lg:gap-3 xl:gap-4">
+                <div className="flex items-center gap-2 lg:gap-2.5 xl:gap-3">
                   <div className="text-center">
-                    <div className="text-lg sm:text-2xl font-black text-white leading-none">
+                    <div className="text-base lg:text-lg xl:text-2xl font-black text-white leading-none">
                       {uniqueStations.length}
                     </div>
                     <div className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mt-1">Stations</div>
                   </div>
-                  <div className="h-6 sm:h-8 w-px bg-zinc-800"></div>
-                  <div className="text-center hidden sm:block">
+                  <div className="h-6 xl:h-8 w-px bg-zinc-800"></div>
+                  <div className="text-center hidden xl:block">
                     <div className="text-2xl font-black text-white leading-none">
                       {allRouteLines.length}
                     </div>
                     <div className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mt-1">Segments</div>
                   </div>
-                  <div className="h-8 w-px bg-zinc-800 hidden sm:block"></div>
-                  <div className="flex items-center gap-3 sm:gap-4">
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]"></div>
-                      <span className="text-zinc-300 text-xs sm:text-sm font-bold">
+                  <div className="h-8 w-px bg-zinc-800 hidden xl:block"></div>
+                  <div className="flex items-center gap-2 lg:gap-3 xl:gap-4">
+                    <div className="flex items-center gap-1.5 xl:gap-2">
+                      <div className="w-2.5 h-2.5 xl:w-3 xl:h-3 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]"></div>
+                      <span className="text-zinc-300 text-xs xl:text-sm font-bold">
                         {stations?.red.length}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]"></div>
-                      <span className="text-zinc-300 text-xs sm:text-sm font-bold">
+                    <div className="flex items-center gap-1.5 xl:gap-2">
+                      <div className="w-2.5 h-2.5 xl:w-3 xl:h-3 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]"></div>
+                      <span className="text-zinc-300 text-xs xl:text-sm font-bold">
                         {stations?.blue.length}
                       </span>
                     </div>
@@ -192,12 +192,12 @@ const CalgaryMap = () => {
                 <button
                   onClick={handleRefresh}
                   disabled={isRefreshing}
-                  className="pointer-events-auto bg-zinc-900/90 backdrop-blur-md border border-zinc-800 text-zinc-100 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed px-3 sm:px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 transition-all active:scale-95"
+                  className="pointer-events-auto bg-zinc-900/90 backdrop-blur-md border border-zinc-800 text-zinc-100 hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed px-2.5 lg:px-3 xl:px-4 py-2 lg:py-2.5 rounded-xl shadow-xl flex items-center gap-2 transition-all active:scale-95"
                 >
                   <RefreshCw
-                    className={`size-3.5 sm:size-4 text-blue-400 ${isRefreshing ? "animate-spin" : ""}`}
+                    className={`size-3.5 xl:size-4 text-blue-400 ${isRefreshing ? "animate-spin" : ""}`}
                   />
-                  <span className="text-xs sm:text-sm font-black uppercase tracking-wider">
+                  <span className="text-xs xl:text-sm font-black uppercase tracking-wider">
                     {isRefreshing ? "..." : "Sync"}
                   </span>
                 </button>

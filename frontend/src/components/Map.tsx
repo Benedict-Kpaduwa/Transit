@@ -1784,8 +1784,8 @@ const Map = ({
 
         {/* Vehicle Tracking Panel - Only show when tracking a vehicle */}
         {trackedVehicle && (
-          <div className="absolute bottom-20 left-7 z-10">
-            <div className="bg-black/90 backdrop-blur-sm border border-zinc-700 rounded-2xl p-4 min-w-[200px]">
+          <div className="absolute bottom-20 left-4 xl:left-7 z-10 max-w-[min(280px,calc(100vw-6rem))]">
+            <div className="bg-black/90 backdrop-blur-sm border border-zinc-700 rounded-2xl p-3 xl:p-4 min-w-[180px] xl:min-w-[200px]">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   {trackedVehicle.vehicleType === "Bus" ? (
@@ -1822,7 +1822,7 @@ const Map = ({
         )}
 
         {/* Map Action Buttons */}
-        <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+        <div className="absolute top-4 right-4 z-10 flex flex-col gap-1.5 xl:gap-2">
           {/* Reset View Button */}
           <button
             onClick={() =>
@@ -1833,7 +1833,7 @@ const Map = ({
                 bearing: 0,
               })
             }
-            className="p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl hover:bg-zinc-800 transition-all"
+            className="p-2.5 xl:p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl hover:bg-zinc-800 transition-all"
             aria-label="Reset map view"
           >
             <Zap className="w-5 h-5 text-zinc-300" />
@@ -1843,7 +1843,7 @@ const Map = ({
           <button
             onClick={flyToUserLocation}
             disabled={isLocating}
-            className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+            className={`p-2.5 xl:p-3 backdrop-blur-sm border rounded-2xl transition-all ${
               userLocation
                 ? "bg-blue-600/90 border-blue-500 hover:bg-blue-500"
                 : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
@@ -1867,7 +1867,7 @@ const Map = ({
               {/* Live Trains Toggle */}
               <button
                 onClick={() => setShowLiveTrains(!showLiveTrains)}
-                className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+                className={`p-2.5 xl:p-3 backdrop-blur-sm border rounded-2xl transition-all ${
                   showLiveTrains && hasRealTimeData
                     ? "bg-green-600/90 border-green-500 hover:bg-green-500"
                     : showLiveTrains && !hasRealTimeData
@@ -1893,7 +1893,7 @@ const Map = ({
               {/* Bus Stops Toggle */}
               <button
                 onClick={() => setShowBusStops(!showBusStops)}
-                className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+                className={`p-2.5 xl:p-3 backdrop-blur-sm border rounded-2xl transition-all ${
                   showBusStops
                     ? "bg-green-600/90 border-green-500 hover:bg-green-500"
                     : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
@@ -1911,7 +1911,7 @@ const Map = ({
               {/* Live Buses Toggle */}
               <button
                 onClick={() => setShowLiveBuses(!showLiveBuses)}
-                className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+                className={`p-2.5 xl:p-3 backdrop-blur-sm border rounded-2xl transition-all ${
                   showLiveBuses && transformedBuses.length > 0
                     ? "bg-emerald-600/90 border-emerald-500 hover:bg-emerald-500"
                     : showLiveBuses && transformedBuses.length === 0
@@ -1933,7 +1933,7 @@ const Map = ({
               {/* Train Lines Toggle */}
               <button
                 onClick={() => setShowTrainLines(!showTrainLines)}
-                className={`p-3 backdrop-blur-sm border rounded-2xl transition-all ${
+                className={`p-2.5 xl:p-3 backdrop-blur-sm border rounded-2xl transition-all ${
                   showTrainLines
                     ? "bg-purple-600/90 border-purple-500 hover:bg-purple-500"
                     : "bg-zinc-900/95 border-zinc-800 hover:bg-zinc-800"
@@ -2011,7 +2011,7 @@ const Map = ({
 
         {/* Selected Station Info Panel */}
         {selectedStation && (
-          <div className="absolute bottom-8 right-20 lg:right-24 bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-5 w-[min(280px,calc(100vw-8rem))] max-w-xs shadow-2xl z-20">
+          <div className="absolute bottom-8 right-20 lg:right-24 bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-4 xl:p-5 w-[min(280px,calc(100vw-8rem))] xl:w-[320px] xl:max-w-sm 2xl:w-[360px] 2xl:max-w-md shadow-2xl z-20">
             <button
               onClick={handleCloseStationInfoWithReset}
               className="absolute top-4 right-3 text-zinc-500 hover:text-zinc-300 transition-colors"
