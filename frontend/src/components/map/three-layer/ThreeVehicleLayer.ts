@@ -2,6 +2,7 @@ import mapboxgl from "mapbox-gl";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
+import { vehicleAnimator } from "@/lib/vehicle-animator";
 
 export interface VehiclePosition {
     id: string;
@@ -19,8 +20,8 @@ interface LoadedModel {
 
 export class ThreeVehicleLayer implements mapboxgl.CustomLayerInterface {
     id: string;
-    type: "custom" = "custom";
-    renderingMode: "3d" = "3d";
+    type = "custom" as const;
+    renderingMode = "3d" as const;
 
     private map: mapboxgl.Map | null = null;
     private camera: THREE.Camera;
@@ -149,16 +150,16 @@ export class ThreeVehicleLayer implements mapboxgl.CustomLayerInterface {
 
                 if (!group) {
                     // Instantiate model
-                    let template = data.vehicleType === "CTrain" ? this.trainModel : this.busModel;
+                    const template = data.vehicleType === "CTrain" ? this.trainModel : this.busModel;
                     if (!template) return;
 
                     group = template.scene.clone();
 
                     // Apply colors
                     const color = this.getVehicleColor(data);
-                    group.traverse((child: any) => {
-                        if (child.isMesh) {
-                            child.material = new THREE.MeshStandardMaterial({
+                    group.traverse((child) => {
+                        if ((child as THREE.Mesh).isMesh) {
+                            (child as THREE.Mesh).material = new THREE.MeshStandardMaterial({
                                 color: color,
                                 roughness: 0.5,
                                 metalness: 0.5
@@ -170,8 +171,15 @@ export class ThreeVehicleLayer implements mapboxgl.CustomLayerInterface {
                     this.vehicles.set(id, group);
                 }
 
+                // Read the smoothed position so 3D models glide between
+                // feed updates instead of teleporting.
+                const live = vehicleAnimator.getPosition(id);
+                const lng = live?.lng ?? data.lng;
+                const lat = live?.lat ?? data.lat;
+                const bearing = live?.bearing ?? data.bearing;
+
                 const mercator = mapboxgl.MercatorCoordinate.fromLngLat(
-                    { lng: data.lng, lat: data.lat },
+                    { lng, lat },
                     0
                 );
 
@@ -183,7 +191,7 @@ export class ThreeVehicleLayer implements mapboxgl.CustomLayerInterface {
                 group.scale.set(scale, scale, scale);
                 group.rotation.set(0, 0, 0);
                 group.rotateX(Math.PI / 2);
-                group.rotateZ(-(data.bearing * Math.PI / 180));
+                group.rotateZ(-(bearing * Math.PI / 180));
             });
         } catch (e) {
             console.error("Error updating 3D vehicle models:", e);
@@ -200,6 +208,9 @@ export class ThreeVehicleLayer implements mapboxgl.CustomLayerInterface {
     render(gl: WebGLRenderingContext, matrix: number[]) {
         if (!this.renderer || !this.map) return;
         try {
+            // Re-position models from the animator every frame for smooth motion
+            this.updateVehicles();
+
             const m = new THREE.Matrix4().fromArray(matrix);
             this.camera.projectionMatrix = m;
             this.renderer.resetState();

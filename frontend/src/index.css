@@ -92,7 +92,7 @@
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
   --sidebar: oklch(1 0 0);
-  --sidebar-foreground: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.97 0 0);
@@ -146,12 +146,35 @@
   }
 }
 
-/* Full-viewport containment — prevents layout distortion on all desktop screen sizes */
+/* Full-viewport containment — prevents layout distortion on all screen sizes.
+   dvh tracks the *visible* viewport on mobile (browser chrome expands/collapses),
+   so the map never hides behind the URL bar. */
 html,
 body,
 #root {
   height: 100%;
   overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
+/* Safe-area utilities for notched devices (iPhone home indicator, etc.) */
+.mb-safe {
+  margin-bottom: env(safe-area-inset-bottom);
+}
+
+.pt-safe-4 {
+  padding-top: calc(env(safe-area-inset-top) + 1rem);
+}
+
+.pb-safe-10 {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 2.5rem);
 }
 
 .train-marker {

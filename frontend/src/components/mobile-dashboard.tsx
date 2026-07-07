@@ -1,16 +1,14 @@
-import * as React from "react";
-import { Train, Bus, MapPin, Navigation, Clock, Search, Settings, Radio, X } from "lucide-react";
+import type { ComponentType, ReactNode } from "react";
+import { Train, Bus, MapPin, Navigation, Radio } from "lucide-react";
 import { useMapStore } from "@/stores/useMapStore";
-import { useAllStationsByLineSorted } from "@/hooks/queries";
 import { useNearbyArrivals, formatArrivalTime, getArrivalUrgencyColor } from "@/hooks/useArrivals";
 import { cn } from "@/lib/utils";
 import MapSearch from "@/components/map/map-search";
 
 export function MobileDashboard() {
-  const { 
-    setMobileView, 
-    setSelectedStation, 
-    userLocation, 
+  const {
+    setMobileView,
+    userLocation,
     showLiveBuses,
     setShowLiveBuses,
     showLiveTrains,
@@ -20,7 +18,6 @@ export function MobileDashboard() {
     showTrainLines,
     setShowTrainLines
   } = useMapStore();
-  const { data: stations } = useAllStationsByLineSorted();
 
   const { data: nearbyCTrains } = useNearbyArrivals(userLocation, {
     radius: 2000,
@@ -31,9 +28,9 @@ export function MobileDashboard() {
   });
 
   return (
-    <div className="flex flex-col min-h-screen bg-zinc-950 text-white pb-10 overflow-x-hidden">
+    <div className="flex flex-col min-h-dvh bg-zinc-950 text-white pb-safe-10 overflow-x-hidden">
       {/* Header / Search */}
-      <div className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-900 p-5 pt-8">
+      <div className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-900 p-5 pt-safe-4">
         <h1 className="text-2xl font-black mb-1 tracking-tight">Where to?</h1>
         <MapSearch 
           onSelect={() => setMobileView("map")}
@@ -140,9 +137,17 @@ export function MobileDashboard() {
   );
 }
 
-function QuickActionButton({ icon: Icon, label, color, onClick }: any) {
+interface QuickActionButtonProps {
+  icon: ComponentType<{ className?: string }> | (() => ReactNode);
+  label: string;
+  color: string;
+  onClick: () => void;
+}
+
+function QuickActionButton({ icon: Icon, label, color, onClick }: QuickActionButtonProps) {
   return (
-    <button 
+    <button
+      type="button"
       onClick={onClick}
       className="flex flex-col items-center gap-3 shrink-0 group"
     >
@@ -151,7 +156,7 @@ function QuickActionButton({ icon: Icon, label, color, onClick }: any) {
         color
       )}>
         {typeof Icon === 'function' && !Icon.prototype?.render ? (
-          Icon()
+          (Icon as () => ReactNode)()
         ) : (
           <Icon className="size-7" />
         )}

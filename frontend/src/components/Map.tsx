@@ -22,6 +22,7 @@ import MapControls from "@/components/map/map-controls";
 import VehicleLayer, {
   type VehiclePositionData,
 } from "@/components/map/vehicle-layer";
+import { vehicleAnimator } from "@/lib/vehicle-animator";
 import Vehicle3DLayer from "@/components/map/Vehicle3DLayer";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
@@ -319,6 +320,16 @@ const Map = ({
   const hasRealTimeData =
     transformedRedTrains.length > 0 || transformedBlueTrains.length > 0 || transformedBuses.length > 0 || !!trackedBusPosition || !!trackedTrainPosition;
 
+  // Feed raw positions into the shared animator; markers, 3D models and the
+  // camera follow all read smooth interpolated positions from it each frame.
+  useEffect(() => {
+    vehicleAnimator.setVehicles(allVehicles);
+  }, [allVehicles]);
+
+  useEffect(() => {
+    return () => vehicleAnimator.clear();
+  }, []);
+
   useEffect(() => {
     if (!mapboxToken || !mapContainerRef.current) return;
 
@@ -453,6 +464,7 @@ const Map = ({
     if (!mapLoaded || !mapRef.current) return;
 
     markersRef.current.forEach((m) => m.remove());
+    markersRef.current = [];
 
     stations.forEach((station) => {
       const el = document.createElement("div");
@@ -577,7 +589,7 @@ const Map = ({
     });
 
     // Add popup on click for individual stops
-    map.on("click", "bus-stops-layer", (e) => {
+    const handleStopClick = (e: mapboxgl.MapLayerMouseEvent) => {
       if (!e.features || e.features.length === 0) return;
       const feature = e.features[0];
       const coordinates = (
@@ -804,18 +816,17 @@ const Map = ({
         `
         )
         .addTo(map);
-    });
+    };
 
-    // Change cursor on hover
-    map.on("mouseenter", "bus-stops-layer", () => {
+    const handleStopEnter = () => {
       map.getCanvas().style.cursor = "pointer";
-    });
-    map.on("mouseleave", "bus-stops-layer", () => {
+    };
+    const handleStopLeave = () => {
       map.getCanvas().style.cursor = "";
-    });
+    };
 
     // Zoom to cluster on click
-    map.on("click", "bus-stops-clusters", (e) => {
+    const handleClusterClick = (e: mapboxgl.MapMouseEvent) => {
       const features = map.queryRenderedFeatures(e.point, {
         layers: ["bus-stops-clusters"],
       });
@@ -835,14 +846,25 @@ const Map = ({
           zoom,
         });
       });
-    });
+    };
 
-    map.on("mouseenter", "bus-stops-clusters", () => {
-      map.getCanvas().style.cursor = "pointer";
-    });
-    map.on("mouseleave", "bus-stops-clusters", () => {
-      map.getCanvas().style.cursor = "";
-    });
+    map.on("click", "bus-stops-layer", handleStopClick);
+    map.on("mouseenter", "bus-stops-layer", handleStopEnter);
+    map.on("mouseleave", "bus-stops-layer", handleStopLeave);
+    map.on("click", "bus-stops-clusters", handleClusterClick);
+    map.on("mouseenter", "bus-stops-clusters", handleStopEnter);
+    map.on("mouseleave", "bus-stops-clusters", handleStopLeave);
+
+    // Without this cleanup, handlers stack up on every toggle and each stop
+    // click spawns duplicate popups.
+    return () => {
+      map.off("click", "bus-stops-layer", handleStopClick);
+      map.off("mouseenter", "bus-stops-layer", handleStopEnter);
+      map.off("mouseleave", "bus-stops-layer", handleStopLeave);
+      map.off("click", "bus-stops-clusters", handleClusterClick);
+      map.off("mouseenter", "bus-stops-clusters", handleStopEnter);
+      map.off("mouseleave", "bus-stops-clusters", handleStopLeave);
+    };
   }, [mapLoaded, showBusStops, busStops]);
 
   useEffect(() => {
@@ -858,37 +880,91 @@ const Map = ({
     }
   }, [selectedStation]);
 
-  // Handle tracked vehicle - fly to and follow the vehicle
+  // Auto-enable relevant layers when tracking a CTrain
   useEffect(() => {
-    if (!trackedVehicle || !mapRef.current) return;
-    
-    // Enable live trains view automatically for CTrains
-    if (trackedVehicle.vehicleType === "CTrain" && !showLiveTrains) {
-      setShowLiveTrains(true);
+    if (!trackedVehicle || trackedVehicle.vehicleType !== "CTrain") return;
+    if (!showLiveTrains) setShowLiveTrains(true);
+    if (!showTrainLines) setShowTrainLines(true);
+  }, [trackedVehicle, showLiveTrains, showTrainLines, setShowLiveTrains, setShowTrainLines]);
+
+  // Camera-follow state: which animator id we're following, and whether the
+  // per-frame follow is active (initial fly-to done, user hasn't taken over).
+  const followRef = useRef<{ trackKey: string | null; animId: string | null; active: boolean }>({
+    trackKey: null,
+    animId: null,
+    active: false,
+  });
+
+  // Fly to the tracked vehicle ONCE when tracking starts (or when the vehicle
+  // first appears in the feed), then hand off to the smooth per-frame follow.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!trackedVehicle || !map) {
+      followRef.current = { trackKey: null, animId: null, active: false };
+      return;
     }
-    
-    // Automatically show train lines when tracking a CTrain
-    if (trackedVehicle.vehicleType === "CTrain" && !showTrainLines) {
-      setShowTrainLines(true);
-    }
-    
-    // Find the vehicle by tripId or vehicleId in all vehicles
-    const vehicle = allVehicles.find(v => v.tripId === trackedVehicle.tripId) 
+
+    const trackKey = trackedVehicle.tripId || trackedVehicle.vehicleId || null;
+    if (!trackKey || followRef.current.trackKey === trackKey) return;
+
+    const vehicle = allVehicles.find(v => v.tripId === trackedVehicle.tripId)
       || allVehicles.find(v => v.vehicleId === trackedVehicle.vehicleId);
-    
-    if (vehicle) {
-      // Fly to the vehicle's position with smooth animation (like station search)
-      mapRef.current.flyTo({
-        center: [vehicle.lng, vehicle.lat],
-        zoom: 16,
-        pitch: 60,
-        bearing: vehicle.bearing,
-        speed: 1.2, // Smooth animation speed
-        curve: 1.42, // Smooth easing curve
-        essential: true, // Animation will happen even if user prefers reduced motion
+    if (!vehicle) return; // Wait until the vehicle shows up in the live feed
+
+    followRef.current = { trackKey, animId: vehicle.id, active: false };
+
+    map.flyTo({
+      center: [vehicle.lng, vehicle.lat],
+      zoom: 16,
+      pitch: 60,
+      bearing: vehicle.bearing,
+      speed: 1.2,
+      curve: 1.42,
+      essential: true,
+    });
+
+    map.once("moveend", () => {
+      if (followRef.current.trackKey === trackKey) {
+        followRef.current.active = true;
+      }
+    });
+  }, [trackedVehicle, allVehicles]);
+
+  // Smooth continuous follow: re-center every animation frame on the
+  // interpolated position. Pauses as soon as the user grabs the map.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!trackedVehicle || !map) return;
+
+    const pauseFollow = () => {
+      followRef.current.active = false;
+    };
+    map.on("dragstart", pauseFollow);
+    map.on("rotatestart", pauseFollow);
+    map.on("pitchstart", pauseFollow);
+    map.on("wheel", pauseFollow);
+
+    const unsubscribe = vehicleAnimator.subscribe(() => {
+      const follow = followRef.current;
+      if (!follow.active || !follow.animId) return;
+
+      const pos = vehicleAnimator.getPosition(follow.animId);
+      if (!pos) return;
+
+      map.jumpTo({
+        center: [pos.lng, pos.lat],
+        bearing: pos.bearing,
       });
-    }
-  }, [trackedVehicle, allVehicles, showLiveTrains, showTrainLines]);
+    });
+
+    return () => {
+      map.off("dragstart", pauseFollow);
+      map.off("rotatestart", pauseFollow);
+      map.off("pitchstart", pauseFollow);
+      map.off("wheel", pauseFollow);
+      unsubscribe();
+    };
+  }, [trackedVehicle]);
 
   // Clear route shape when tracked vehicle changes (switching to different vehicle)
   useEffect(() => {
@@ -896,24 +972,6 @@ const Map = ({
     // This prevents old route lines from lingering when switching vehicles
     setViewedRouteShape(null);
   }, [trackedVehicle?.tripId, trackedVehicle?.vehicleId]);
-
-  // Continuously follow tracked vehicle
-  useEffect(() => {
-    if (!trackedVehicle || !mapRef.current) return;
-    
-    // Find the vehicle in all vehicles
-    const vehicle = allVehicles.find(v => v.tripId === trackedVehicle.tripId) 
-      || allVehicles.find(v => v.vehicleId === trackedVehicle.vehicleId);
-    
-    if (vehicle) {
-      mapRef.current.jumpTo({
-        center: [vehicle.lng, vehicle.lat],
-        bearing: vehicle.bearing,
-        pitch: 60,
-        zoom: 16,
-      });
-    }
-  }, [trackedVehicle, allVehicles]);
 
   // Stop tracking and reset map to original state
   const stopTracking = useCallback(() => {
@@ -938,7 +996,7 @@ const Map = ({
         essential: true,
       });
     }
-  }, [setTrackedVehicle]);
+  }, [setTrackedVehicle, setShowTrainLines]);
 
   // Create user location marker element
   const createUserLocationEl = useCallback(() => {
@@ -1083,21 +1141,7 @@ const Map = ({
       }
       
       const segment = bestTrack.slice(startIdx, endIdx + 1);
-      
-      // Debug logging
-      console.log('Track segment extraction:', {
-        trackLength,
-        bestFromIdx,
-        bestToIdx,
-        startIdx,
-        endIdx,
-        segmentLength: segment.length,
-        segmentStart: segment[0],
-        segmentEnd: segment[segment.length - 1],
-        trackStart: bestTrack[0],
-        trackEnd: bestTrack[trackLength - 1],
-      });
-      
+
       // Ensure the segment starts and ends at the exact station coordinates
       // This fixes gaps between transit and walking segments
       let result: [number, number][];
@@ -1474,7 +1518,6 @@ const Map = ({
         duration: 1500,
       });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapLoaded, tripPlan, getTrackSegment, routeLines, styleChangeCounter]);
 
   // Handle route calculation from TripPlanner
@@ -1501,7 +1544,7 @@ const Map = ({
         essential: true,
       });
     }
-  }, []);
+  }, [setShowTrainLines]);
 
   // Clear external destination after it's consumed by TripPlanner
   const handleClearExternalDestination = useCallback(() => {
@@ -1528,7 +1571,7 @@ const Map = ({
     
     // Call original callback to clear selected station
     onCloseStationInfo();
-  }, [onCloseStationInfo]);
+  }, [onCloseStationInfo, setShowTrainLines]);
 
   // Get user location
   const getUserLocation = useCallback((flyToLocation: boolean = true) => {
@@ -1699,7 +1742,6 @@ const Map = ({
         <div ref={mapContainerRef} className="absolute inset-0 w-full h-full" />
 
         {/* Vehicle Markers - Render when live trains/buses is enabled OR when tracking any vehicle */}
-        {/* Vehicle Markers - Render when live trains/buses is enabled OR when tracking any vehicle */}
         {mapLoaded && (showLiveTrains || showLiveBuses || trackedVehicle) && (
           <VehicleLayer
             map={mapInstance}
@@ -1749,7 +1791,7 @@ const Map = ({
 
         {/* Vehicle Tracking Panel - Only show when tracking a vehicle */}
         {trackedVehicle && (
-          <div className="absolute bottom-20 left-4 xl:left-7 z-10 max-w-[min(280px,calc(100vw-6rem))]">
+          <div className="absolute bottom-20 left-4 xl:left-7 z-10 max-w-[min(280px,calc(100vw-6rem))] mb-safe">
             <div className="bg-black/90 backdrop-blur-sm border border-zinc-700 rounded-2xl p-3 xl:p-4 min-w-[180px] xl:min-w-[200px]">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
@@ -1974,9 +2016,15 @@ const Map = ({
           </div>
         )}
 
-        {/* Selected Station Info Panel */}
+        {/* Selected Station Info Panel — bottom sheet on mobile, floating card on desktop */}
         {selectedStation && (
-          <div className="absolute bottom-8 right-20 lg:right-24 bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl p-4 xl:p-5 w-[min(280px,calc(100vw-8rem))] xl:w-[320px] xl:max-w-sm 2xl:w-[360px] 2xl:max-w-md shadow-2xl z-20">
+          <div
+            className={`absolute bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl shadow-2xl z-20 ${
+              isMobile
+                ? "left-3 right-3 bottom-3 p-4 mb-safe animate-in slide-in-from-bottom-4 duration-300"
+                : "bottom-8 right-20 lg:right-24 p-4 xl:p-5 w-[min(280px,calc(100vw-8rem))] xl:w-[320px] xl:max-w-sm 2xl:w-[360px] 2xl:max-w-md"
+            }`}
+          >
             <button
               onClick={handleCloseStationInfoWithReset}
               className="absolute top-4 right-3 text-zinc-500 hover:text-zinc-300 transition-colors"
@@ -2021,7 +2069,7 @@ const Map = ({
                     <span className="text-xs">Loading arrivals...</span>
                   </div>
                 ) : stationArrivals?.arrivals && stationArrivals.arrivals.length > 0 ? (
-                  <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                  <div className={`space-y-2 overflow-y-auto ${isMobile ? "max-h-[30dvh]" : "max-h-[200px]"}`}>
                     {stationArrivals.arrivals.slice(0, 6).map((arrival, idx) => (
                       <div
                         key={idx}

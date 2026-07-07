@@ -11,4 +11,17 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Split the heavy libraries into separate long-cacheable chunks so
+        // app-code changes don't invalidate ~2MB of vendor code.
+        manualChunks: {
+          mapbox: ["mapbox-gl"],
+          three: ["three"],
+          react: ["react", "react-dom", "@tanstack/react-query"],
+        },
+      },
+    },
+  },
 })

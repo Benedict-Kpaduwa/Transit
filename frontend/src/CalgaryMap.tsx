@@ -1,11 +1,10 @@
 import { useMemo, useEffect, useCallback } from "react";
 import Map from "@/components/Map";
-import { Train, RefreshCw, MapPin, Menu, ArrowLeft, Navigation } from "lucide-react";
+import { RefreshCw, ArrowLeft, Navigation } from "lucide-react";
 import SplashScreen from "@/components/shared/splash-screen";
 import ErrorScreen from "@/components/shared/error-screen";
 import { useAllRouteLines, useAllStationsByLineSorted } from "@/hooks/queries";
 import { useMapStore } from "@/stores/useMapStore";
-import { useSidebar } from "@/components/ui/sidebar";
 import { MobileDashboard } from "@/components/mobile-dashboard";
 import MapSearch from "@/components/map/map-search";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
@@ -43,7 +42,6 @@ const CalgaryMap = () => {
     mapInstance,
     setShowTrainLines,
   } = useMapStore();
-  const { toggleSidebar } = useSidebar();
 
   const handleClearSearch = useCallback(() => {
     setShowTrainLines(false);
@@ -95,14 +93,10 @@ const CalgaryMap = () => {
     return <SplashScreen />;
   }
 
-  if (isLoading) {
-    return <SplashScreen />;
-  }
-
   if (error) {
     return (
       <ErrorScreen
-        error={(error as any)?.message || "An unknown error occurred"}
+        error={error instanceof Error ? error.message : "An unknown error occurred"}
         handleRefresh={refetch}
         refreshing={isLoading}
       />
@@ -110,7 +104,7 @@ const CalgaryMap = () => {
   }
 
   return (
-    <div className="relative flex h-screen w-full bg-linear-to-br from-gray-900 via-black to-gray-900 overflow-hidden">
+    <div className="relative flex flex-col lg:flex-row h-dvh w-full bg-linear-to-br from-gray-900 via-black to-gray-900 overflow-hidden">
       {/* Background patterns */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-1 bg-linear-to-r from-transparent via-blue-500/20 to-transparent animate-pulse"></div>
@@ -136,7 +130,7 @@ const CalgaryMap = () => {
 
       {/* Mobile Header - Always visible when Map is active on mobile */}
       {isMobile && mobileView === "map" && (
-        <div className="lg:hidden bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-900/50 p-4 z-20">
+        <div className="lg:hidden shrink-0 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-900/50 p-4 pt-safe-4 z-20">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               {/* Back to Home Button on Map View */}

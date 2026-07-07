@@ -1,14 +1,10 @@
 import * as React from "react";
 import { cva } from "class-variance-authority";
-import { PanelLeftIcon, ChevronDown, Menu, type LucideIcon } from "lucide-react";
+import { PanelLeftIcon, ChevronDown, type LucideIcon } from "lucide-react";
 
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-} from "@/components/ui/sheet";
 import {
   Tooltip,
   TooltipContent,
@@ -93,7 +89,7 @@ export function SidebarProvider({
               "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
             } as React.CSSProperties
           }
-          className={cn("flex h-screen w-full overflow-hidden bg-[#0a0a0a]", className)}
+          className={cn("flex h-dvh w-full overflow-hidden bg-[#0a0a0a]", className)}
         >
           {children}
         </div>
@@ -103,7 +99,7 @@ export function SidebarProvider({
 }
 
 export function Sidebar({ children, className }: React.ComponentProps<"div">) {
-  const { state, isMobile, openMobile, setOpenMobile } = useSidebar();
+  const { state, isMobile } = useSidebar();
 
   if (isMobile) {
     return null;
@@ -113,7 +109,7 @@ export function Sidebar({ children, className }: React.ComponentProps<"div">) {
     <aside
       data-state={state}
       className={cn(
-        "group sticky top-0 z-20 hidden h-screen transition-[width] duration-300 ease-in-out md:block shrink-0",
+        "group sticky top-0 z-20 hidden h-dvh transition-[width] duration-300 ease-in-out md:block shrink-0",
         state === "expanded"
           ? "md:w-64 lg:w-72 xl:w-80 2xl:w-[22rem]"
           : "w-(--sidebar-width-icon)",
