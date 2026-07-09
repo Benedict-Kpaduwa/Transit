@@ -19,6 +19,7 @@ import {
 } from "@/services/api";
 import { useGeocode, usePlanTripMutation } from "@/hooks/queries";
 import { useDebounce } from "@/hooks/useDebounce";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 interface TripPlannerProps {
@@ -303,6 +304,7 @@ export default function TripPlanner({
   externalDestination,
   onClearExternalDestination,
 }: TripPlannerProps) {
+  const isMobile = useIsMobile();
   const [isExpanded, setIsExpanded] = useState(false);
   const [originQuery, setOriginQuery] = useState("");
   const [destQuery, setDestQuery] = useState("");
@@ -321,6 +323,8 @@ export default function TripPlanner({
   const [showDestSuggestions, setShowDestSuggestions] = useState(false);
 
   const [tripPlan, setTripPlan] = useState<TripPlan | null>(null);
+  // Formatted once when the plan arrives (render must stay pure)
+  const [arrivalTimeText, setArrivalTimeText] = useState<string | null>(null);
 
   // Use TanStack Query mutation for trip planning
   const planTripMutation = usePlanTripMutation();
@@ -397,6 +401,17 @@ export default function TripPlanner({
       {
         onSuccess: (result) => {
           setTripPlan(result);
+          setArrivalTimeText(
+            result.success && result.summary
+              ? new Date(
+                  Date.now() + result.summary.total_duration * 1000
+                ).toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  hour12: true,
+                })
+              : null
+          );
           if (result.success) {
             onRouteCalculated(result);
           }
@@ -427,7 +442,14 @@ export default function TripPlanner({
     (originCoords && destCoords);
 
   return (
-    <div className="absolute top-4 right-16 sm:right-16 lg:right-20 z-20 w-[min(calc(100vw-8rem),360px)] sm:w-[360px]">
+    <div
+      className={cn(
+        "absolute z-20",
+        isMobile
+          ? "top-3 left-3 right-16"
+          : "top-4 right-16 lg:right-20 w-[min(calc(100vw-8rem),360px)] sm:w-[360px]"
+      )}
+    >
       {/* Collapsed state */}
       {!isExpanded && (
         <button
@@ -449,7 +471,7 @@ export default function TripPlanner({
 
       {/* Expanded state */}
       {isExpanded && (
-        <div className="bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl shadow-xl overflow-hidden">
+        <div className="bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[calc(100dvh-9rem)]">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
             <div className="flex items-center gap-2">
@@ -541,7 +563,7 @@ export default function TripPlanner({
 
           {/* Trip results */}
           {tripPlan && (
-            <div className="border-t border-zinc-800">
+            <div className="border-t border-zinc-800 min-h-0 overflow-y-auto">
               {tripPlan.success && tripPlan.summary ? (
                 <>
                   {/* Enhanced Summary Card */}
@@ -555,7 +577,7 @@ export default function TripPlanner({
                         <div>
                           <p className="text-xs text-zinc-400">Leave now</p>
                           <p className="text-sm font-semibold text-white">
-                            Arrive ~{new Date(Date.now() + (tripPlan.summary.total_duration * 1000)).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                            Arrive ~{arrivalTimeText ?? tripPlan.summary.total_duration_text}
                           </p>
                         </div>
                       </div>
@@ -610,8 +632,8 @@ export default function TripPlanner({
                     </div>
                   </div>
 
-                  {/* Segments */}
-                  <div className="px-4 py-3 max-h-[40vh] sm:max-h-[320px] overflow-y-auto space-y-2">
+                  {/* Segments — the results container scrolls as a whole */}
+                  <div className="px-4 py-3 space-y-2">
                     {tripPlan.segments?.map((segment, index) => (
                       <TripSegmentCard
                         key={index}

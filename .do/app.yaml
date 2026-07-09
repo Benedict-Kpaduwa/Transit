@@ -1,25 +1,33 @@
 # DigitalOcean App Platform Spec — Calgary Transit (Single Container)
 # Docs: https://docs.digitalocean.com/products/app-platform/reference/app-spec/
+#
+# The image is built and pushed by GitHub Actions (.github/workflows/deploy.yml),
+# which then triggers a deployment. Building from the DOCR image (instead of
+# `github:` source) means one build per push and deploys gated on CI.
+#
+# After changing this spec, apply it once with:
+#   doctl apps update <APP_ID> --spec .do/app.yaml
 
 name: calgary-transit
 
 services:
   - name: calgary-transit
-    github:
-      repo: Benedict-Kpaduwa/Transit
-      branch: master
-      deploy_on_push: true
-    dockerfile_path: Dockerfile
+    image:
+      registry_type: DOCR
+      repository: calgary-transit
+      tag: latest
     http_port: 8080
     instance_count: 1
     instance_size_slug: professional-xs
     health_check:
       http_path: /api/health
-      initial_delay_seconds: 20
+      # GTFS indexes are built at startup — give the container time to
+      # finish before health checks can fail the deployment.
+      initial_delay_seconds: 60
       period_seconds: 30
       timeout_seconds: 5
       success_threshold: 1
-      failure_threshold: 3
+      failure_threshold: 5
     envs:
       - key: CALGARY_APP_TOKEN
         scope: RUN_TIME
@@ -32,7 +40,4 @@ services:
         type: SECRET
       - key: GOOGLE_API_KEY
         scope: RUN_TIME
-        type: SECRET
-      - key: VITE_MAPBOX_ACCESS_TOKEN
-        scope: BUILD_TIME
         type: SECRET

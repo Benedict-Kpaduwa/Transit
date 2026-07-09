@@ -1,15 +1,69 @@
-name: Deploy to DigitalOcean
+name: CI & Deploy
 
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# Never run two deployments at once; queue instead of cancelling a
+# deployment that is already rolling out.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   REGISTRY: registry.digitalocean.com
   IMAGE_NAME: calgary-transit
+  APP_NAME: calgary-transit
 
 jobs:
+  ci:
+    name: Build & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck & build frontend
+        working-directory: frontend
+        run: pnpm run build
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Compile backend sources
+        run: python -m compileall -q backend -x 'venv|__pycache__'
+
   build-and-deploy:
+    name: Deploy to DigitalOcean
+    needs: ci
+    # Deploy only on pushes to master (and manual dispatches), never on PRs
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -21,27 +75,31 @@ jobs:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
       - name: Log in to DigitalOcean Container Registry
-        run: doctl registry login --expiry-seconds 600
+        run: doctl registry login --expiry-seconds 1200
 
-      - name: Build Docker image
-        run: |
-          docker build \
-            --build-arg VITE_MAPBOX_ACCESS_TOKEN=${{ secrets.VITE_MAPBOX_ACCESS_TOKEN }} \
-            -t ${{ env.REGISTRY }}/${{ secrets.REGISTRY_NAME }}/${{ env.IMAGE_NAME }}:latest \
-            -t ${{ env.REGISTRY }}/${{ secrets.REGISTRY_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            .
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Push to DOCR
-        run: |
-          docker push ${{ env.REGISTRY }}/${{ secrets.REGISTRY_NAME }}/${{ env.IMAGE_NAME }}:latest
-          docker push ${{ env.REGISTRY }}/${{ secrets.REGISTRY_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ secrets.REGISTRY_NAME }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ secrets.REGISTRY_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          build-args: |
+            VITE_MAPBOX_ACCESS_TOKEN=${{ secrets.VITE_MAPBOX_ACCESS_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Deploy to App Platform
         run: |
-          APP_ID=$(doctl apps list --format ID --no-header | head -1)
-          if [ -n "$APP_ID" ]; then
-            doctl apps create-deployment "$APP_ID" --wait
-          else
-            echo "No app found. Create one first via: doctl apps create --spec .do/app.yaml"
+          APP_ID=$(doctl apps list --format ID,Spec.Name --no-header \
+            | awk -v name="$APP_NAME" '$2 == name {print $1}')
+          if [ -z "$APP_ID" ]; then
+            echo "::error::No App Platform app named '$APP_NAME' found."
+            echo "Create it once with: doctl apps create --spec .do/app.yaml"
             exit 1
           fi
+          doctl apps create-deployment "$APP_ID" --wait

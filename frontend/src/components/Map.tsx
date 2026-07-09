@@ -1184,40 +1184,53 @@ const Map = ({
     [routeLines]
   );
 
+  // Auto-dismiss the location error toast so it never blocks the UI
+  useEffect(() => {
+    if (!locationError) return;
+    const timeoutId = setTimeout(() => setLocationError(null), 5000);
+    return () => clearTimeout(timeoutId);
+  }, [locationError]);
+
+  // Caches of fetched walking paths / route shapes so re-renders don't refetch
+  // (globalThis.Map: the bare name is shadowed by this component)
+  const walkPathCacheRef = useRef<Map<string, [number, number][]>>(new globalThis.Map());
+  const routeShapeCacheRef = useRef<Map<string, [number, number][]>>(new globalThis.Map());
+
   // Trip route visualization
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return;
     const map = mapRef.current;
+    let cancelled = false;
 
     // Clear existing trip layers and markers
     tripMarkersRef.current.forEach((m) => m.remove());
     tripMarkersRef.current = [];
 
     // Remove existing trip route layers
-    if (map.getLayer("trip-walk-route")) {
-      map.removeLayer("trip-walk-route");
-    }
-    if (map.getSource("trip-walk-route")) {
-      map.removeSource("trip-walk-route");
-    }
-    if (map.getLayer("trip-transit-route")) {
-      map.removeLayer("trip-transit-route");
-    }
-    if (map.getLayer("trip-transit-glow")) {
-      map.removeLayer("trip-transit-glow");
-    }
-    if (map.getSource("trip-transit-route")) {
-      map.removeSource("trip-transit-route");
-    }
+    ["trip-walk-route", "trip-walk-casing", "trip-transit-route", "trip-transit-casing", "trip-transit-glow"].forEach((layerId) => {
+      if (map.getLayer(layerId)) map.removeLayer(layerId);
+    });
+    ["trip-walk-route", "trip-transit-route"].forEach((sourceId) => {
+      if (map.getSource(sourceId)) map.removeSource(sourceId);
+    });
 
     if (!tripPlan?.success || !tripPlan.segments) return;
 
-    // Collect all walking route coordinates
-    const walkingCoordinates: [number, number][][] = [];
+    // Walk segments may need street-following geometry fetched asynchronously
+    const walkSegments: Array<{
+      from: [number, number];
+      to: [number, number];
+      coords: [number, number][] | null;
+    }> = [];
     const transitRoutes: Array<{
-      coordinates: [number, number][];
+      // null = no geometry from the backend; resolved from the route's
+      // GTFS shape inside draw()
+      coordinates: [number, number][] | null;
       color: string;
       vehicleType: string;
+      from: [number, number];
+      to: [number, number];
+      routeShortName?: string;
     }> = [];
     const transitStops: Array<{
       coords: [number, number];
@@ -1232,11 +1245,13 @@ const Map = ({
     }> = [];
 
     tripPlan.segments.forEach((segment, index) => {
-      // Add walking route geometry
-      if (segment.type === "walk" && segment.geometry?.coordinates) {
-        walkingCoordinates.push(
-          segment.geometry.coordinates as [number, number][]
-        );
+      // Collect walking segments (geometry resolved in draw() below)
+      if (segment.type === "walk") {
+        walkSegments.push({
+          from: segment.from.coordinates,
+          to: segment.to.coordinates,
+          coords: (segment.geometry?.coordinates as [number, number][]) ?? null,
+        });
       }
 
       // Add transit route geometry
@@ -1252,21 +1267,16 @@ const Map = ({
               : "#0088FF"
             : "#22c55e");
 
-        // For CTrain, use actual track coordinates
-        // For Bus, use geometry from backend if available, otherwise direct line
-        let routeCoordinates: [number, number][];
+        let routeCoordinates: [number, number][] | null;
 
-        // First check if backend provided geometry
         if (segment.geometry?.coordinates) {
-          // Use backend-provided geometry (works for both CTrain and Bus)
-          routeCoordinates = [...segment.geometry.coordinates] as [number, number][];
-          
-          // CRITICAL: Force endpoints to match segment from/to coordinates
-          // This ensures the line ends exactly at the station markers
-          if (routeCoordinates.length >= 2) {
-            routeCoordinates[0] = fromCoords;
-            routeCoordinates[routeCoordinates.length - 1] = toCoords;
-          }
+          // Trim to the boarding→alighting span — full-route shapes would
+          // overshoot both stops and draw loops past the destination.
+          routeCoordinates = trimShapeToSpan(
+            segment.geometry.coordinates as [number, number][],
+            fromCoords,
+            toCoords
+          );
         } else if (segment.vehicle_type === "CTrain") {
           // Fallback: Extract CTrain segment from local track data
           routeCoordinates = getTrackSegment(
@@ -1275,14 +1285,18 @@ const Map = ({
             segment.line || "Red Line"
           );
         } else {
-          // Fallback to direct line
-          routeCoordinates = [fromCoords, toCoords];
+          // No geometry (typical for bus legs) — fetch the route's GTFS
+          // shape in draw() instead of drawing a straight line across town
+          routeCoordinates = null;
         }
 
         transitRoutes.push({
           coordinates: routeCoordinates,
           color,
           vehicleType: segment.vehicle_type || "Transit",
+          from: fromCoords,
+          to: toCoords,
+          routeShortName: segment.route_short_name,
         });
       }
 
@@ -1324,41 +1338,87 @@ const Map = ({
       }
     });
 
-    // Add walking routes as a single source with multiple lines
-    if (walkingCoordinates.length > 0) {
-      const features = walkingCoordinates.map((coords) => ({
-        type: "Feature" as const,
-        geometry: {
-          type: "LineString" as const,
-          coordinates: coords,
-        },
-        properties: {},
-      }));
+    const draw = async () => {
+      // Resolve walking geometry: prefer backend street paths; for straight
+      // 2-point fallbacks over ~120m, fetch a real path from Mapbox.
+      const walkingCoordinates: [number, number][][] = [];
+      for (const walk of walkSegments) {
+        if (approxDistanceMeters(walk.from, walk.to) < 10) continue;
+        let coords = walk.coords;
+        if (
+          (!coords || coords.length < 3) &&
+          approxDistanceMeters(walk.from, walk.to) > 120 &&
+          mapboxToken
+        ) {
+          const fetched = await fetchWalkingPath(
+            walk.from,
+            walk.to,
+            mapboxToken,
+            walkPathCacheRef.current
+          );
+          if (fetched) coords = fetched;
+        }
+        if (!coords || coords.length < 2) coords = [walk.from, walk.to];
+        walkingCoordinates.push(coords);
+      }
 
-      map.addSource("trip-walk-route", {
-        type: "geojson",
-        data: {
-          type: "FeatureCollection",
-          features,
-        },
-      });
+      // Resolve transit legs that came without geometry (typically buses):
+      // fetch the route's GTFS shape and trim it to the boarding→alighting
+      // span, so the line follows the actual roads instead of cutting
+      // straight across the city.
+      for (const route of transitRoutes) {
+        if (!route.coordinates && route.routeShortName) {
+          const shape = await fetchRouteShape(
+            route.routeShortName,
+            routeShapeCacheRef.current
+          );
+          if (shape) {
+            route.coordinates = trimShapeToSpan(shape, route.from, route.to);
+          }
+        }
+        if (!route.coordinates) route.coordinates = [route.from, route.to];
+      }
 
-      map.addLayer({
-        id: "trip-walk-route",
-        type: "line",
-        source: "trip-walk-route",
-        layout: {
-          "line-join": "round",
-          "line-cap": "round",
-        },
-        paint: {
-          "line-color": "#8b5cf6", // Purple for walking
-          "line-width": 5,
-          "line-dasharray": [1, 2], // More dots-like pattern
-          "line-opacity": 0.9,
-        },
-      });
-    }
+      // The fetches above are async — bail out if the trip changed meanwhile
+      if (cancelled || !mapRef.current || !map.getStyle()) return;
+
+      // Add walking routes as a single source with multiple lines
+      if (walkingCoordinates.length > 0) {
+        const features = walkingCoordinates.map((coords) => ({
+          type: "Feature" as const,
+          geometry: {
+            type: "LineString" as const,
+            coordinates: coords,
+          },
+          properties: {},
+        }));
+
+        map.addSource("trip-walk-route", {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features,
+          },
+        });
+
+        // Google-style walking path: a trail of round blue dots
+        // (zero-length dashes + round caps render as circles)
+        map.addLayer({
+          id: "trip-walk-route",
+          type: "line",
+          source: "trip-walk-route",
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+          },
+          paint: {
+            "line-color": "#4285F4",
+            "line-width": 6,
+            "line-dasharray": [0, 2.2],
+            "line-opacity": 1,
+          },
+        });
+      }
 
     // Add transit routes with their specific colors
     if (transitRoutes.length > 0) {
@@ -1366,7 +1426,8 @@ const Map = ({
         type: "Feature" as const,
         geometry: {
           type: "LineString" as const,
-          coordinates: route.coordinates,
+          // Resolved above; fallback kept for the type system
+          coordinates: route.coordinates ?? [route.from, route.to],
         },
         properties: {
           color: route.color,
@@ -1382,9 +1443,9 @@ const Map = ({
         },
       });
 
-      // Glow layer (wider, semi-transparent underneath)
+      // Google/Apple-style transit line: solid route color over a white casing
       map.addLayer({
-        id: "trip-transit-glow",
+        id: "trip-transit-casing",
         type: "line",
         source: "trip-transit-route",
         layout: {
@@ -1392,14 +1453,12 @@ const Map = ({
           "line-cap": "round",
         },
         paint: {
-          "line-color": ["get", "color"],
-          "line-width": 12,
-          "line-opacity": 0.3,
-          "line-blur": 3,
+          "line-color": "#ffffff",
+          "line-width": 10,
+          "line-opacity": 0.95,
         },
       });
 
-      // Main route line
       map.addLayer({
         id: "trip-transit-route",
         type: "line",
@@ -1434,47 +1493,38 @@ const Map = ({
       el.className = "trip-marker";
 
       if (stop.type === "origin") {
+        // Google-style origin: small white dot with a dark ring
         el.innerHTML = `
-          <div class="relative flex items-center justify-center">
-            <div class="absolute w-12 h-12 rounded-full bg-green-500/30 animate-ping"></div>
-            <div class="absolute w-10 h-10 rounded-full bg-green-500/20"></div>
-            <div class="relative w-9 h-9 bg-linear-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center shadow-lg border-3 border-white">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
-            </div>
-          </div>
+          <div style="
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: 4px solid #1f2937;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+          "></div>
         `;
       } else if (stop.type === "destination") {
+        // Google-style destination: red teardrop pin anchored at its tip
         el.innerHTML = `
-          <div class="relative flex items-center justify-center">
-            <div class="absolute w-12 h-12 rounded-full bg-red-500/30 animate-ping"></div>
-            <div class="absolute w-10 h-10 rounded-full bg-red-500/20"></div>
-            <div class="relative w-9 h-9 bg-linear-to-br from-red-400 to-red-600 rounded-full flex items-center justify-center shadow-lg border-3 border-white">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-            </div>
-          </div>
+          <svg width="34" height="44" viewBox="0 0 34 44" style="display:block; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.35));">
+            <path d="M17 1C8.7 1 2 7.7 2 16c0 10.5 13.1 25.4 14.4 26.6a1 1 0 0 0 1.2 0C18.9 41.4 32 26.5 32 16 32 7.7 25.3 1 17 1Z" fill="#EA4335" stroke="#ffffff" stroke-width="2"/>
+            <circle cx="17" cy="16" r="5.5" fill="#7f1d1d"/>
+          </svg>
         `;
       } else {
-        // Transit stop - use vehicle-specific color and icon
-        const bgColor = stop.color || "#3b82f6"; // Default blue
-        const isTrain = stop.vehicleType === "CTrain";
-        const icon = isTrain
-          ? `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3.89V19h8V3.89C16 2.3 14.88 1 13.5 1h-3C9.12 1 8 2.3 8 3.89z"/><path d="M12 1v3"/><path d="M8 13h8"/><circle cx="10" cy="17" r="1"/><circle cx="14" cy="17" r="1"/><path d="M5 19h14l-1.5 4H6.5z"/></svg>`
-          : `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6v6"/><path d="M15 6v6"/><path d="M2 12h19.6"/><path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/></svg>`;
-
-        // Show stops count badge only for boarding stops with stopsCount
-        const stopsCountBadge = stop.stopsCount && stop.stopsCount > 0 ? `
-          <div class="absolute -top-1 -right-1 w-5 h-5 bg-white rounded-full flex items-center justify-center shadow-md border border-gray-200">
-            <span class="text-xs font-bold" style="color: ${bgColor}">${stop.stopsCount}</span>
-          </div>
-        ` : '';
-
+        // Transfer/boarding stop: small white circle ringed in the route color
+        const ringColor = stop.color || "#3b82f6";
         el.innerHTML = `
-          <div class="relative">
-            <div class="w-8 h-8 rounded-full flex items-center justify-center shadow-lg border-2 border-white" style="background-color: ${bgColor}">
-              ${icon}
-            </div>
-            ${stopsCountBadge}
-          </div>
+          <div style="
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: 3.5px solid ${ringColor};
+            box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+            cursor: pointer;
+          "></div>
         `;
       }
 
@@ -1493,32 +1543,55 @@ const Map = ({
       }
       popupContent += `</div>`;
 
-      const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
+      const marker = new mapboxgl.Marker({
+        element: el,
+        // The pin's tip must sit on the destination; dots center on theirs
+        anchor: stop.type === "destination" ? "bottom" : "center",
+      })
         .setLngLat(stop.coords)
         .setPopup(
-          new mapboxgl.Popup({ offset: 25 }).setHTML(popupContent)
+          new mapboxgl.Popup({ offset: stop.type === "destination" ? 44 : 14 }).setHTML(popupContent)
         )
         .addTo(map);
 
       tripMarkersRef.current.push(marker);
     });
 
-    // Fit bounds to show the entire route
-    if (tripPlan.origin && tripPlan.destination) {
-      const bounds = new mapboxgl.LngLatBounds();
-      bounds.extend(tripPlan.origin.coordinates);
-      bounds.extend(tripPlan.destination.coordinates);
+      // Fit bounds to show the entire route (stops AND drawn geometry, so
+      // looping bus shapes or long walk paths never fall outside the view)
+      if (tripPlan.origin && tripPlan.destination) {
+        const bounds = new mapboxgl.LngLatBounds();
+        bounds.extend(tripPlan.origin.coordinates);
+        bounds.extend(tripPlan.destination.coordinates);
+        transitStops.forEach((stop) => bounds.extend(stop.coords));
+        transitRoutes.forEach((route) =>
+          route.coordinates?.forEach((c) => bounds.extend(c))
+        );
+        walkingCoordinates.forEach((coords) =>
+          coords.forEach((c) => bounds.extend(c))
+        );
 
-      // Extend with all transit stops
-      transitStops.forEach((stop) => bounds.extend(stop.coords));
+        map.fitBounds(bounds, {
+          // Desktop: leave room for the trip panel on the right.
+          // Mobile: the panel overlays the top, so pad there instead.
+          padding: isMobile
+            ? { top: 220, bottom: 80, left: 40, right: 40 }
+            : { top: 100, bottom: 100, left: 120, right: 420 },
+          maxZoom: 15,
+          duration: 1500,
+          // Overhead view for the route overview, like Google/Apple directions
+          pitch: 0,
+          bearing: 0,
+        });
+      }
+    };
 
-      map.fitBounds(bounds, {
-        padding: { top: 100, bottom: 100, left: 400, right: 100 },
-        maxZoom: 15,
-        duration: 1500,
-      });
-    }
-  }, [mapLoaded, tripPlan, getTrackSegment, routeLines, styleChangeCounter]);
+    draw();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mapLoaded, tripPlan, getTrackSegment, routeLines, styleChangeCounter, isMobile, mapboxToken]);
 
   // Handle route calculation from TripPlanner
   const handleRouteCalculated = useCallback((plan: TripPlan) => {
@@ -1772,8 +1845,8 @@ const Map = ({
 
         {/* Nearby Arrivals moved to Sidebar */}
 
-        {/* Trip Planner - Google Maps style floating panel */}
-        {!isMobile && mapLoaded && (
+        {/* Trip Planner - Google Maps style floating panel (all devices) */}
+        {mapLoaded && (
           <TripPlanner
             userLocation={userLocation}
             onRouteCalculated={handleRouteCalculated}
@@ -2127,6 +2200,104 @@ const Map = ({
     </MapContext.Provider>
   );
 };
+
+function approxDistanceMeters(a: [number, number], b: [number, number]): number {
+  const dLat = (b[1] - a[1]) * 111320;
+  const dLng = (b[0] - a[0]) * 111320 * Math.cos((a[1] * Math.PI) / 180);
+  return Math.sqrt(dLat * dLat + dLng * dLng);
+}
+
+function closestIndexOnLine(
+  coords: [number, number][],
+  point: [number, number]
+): number {
+  let best = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < coords.length; i++) {
+    const dx = coords[i][0] - point[0];
+    const dy = coords[i][1] - point[1];
+    const d = dx * dx + dy * dy;
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
+ * Slice a route shape to just the boarding→alighting span and pin its
+ * endpoints to the stops. Backends sometimes return the vehicle's FULL
+ * route shape; drawing it verbatim overshoots past both stops.
+ */
+function trimShapeToSpan(
+  coords: [number, number][],
+  from: [number, number],
+  to: [number, number]
+): [number, number][] {
+  if (!coords || coords.length < 2) return [from, to];
+  const i = closestIndexOnLine(coords, from);
+  const j = closestIndexOnLine(coords, to);
+  const span =
+    i <= j ? coords.slice(i, j + 1) : coords.slice(j, i + 1).reverse();
+  if (span.length < 2) return [from, to];
+  return [from, ...span.slice(1, -1), to];
+}
+
+/** Full GTFS shape for a route, from the backend. */
+async function fetchRouteShape(
+  routeShortName: string,
+  cache: Map<string, [number, number][]>
+): Promise<[number, number][] | null> {
+  const cached = cache.get(routeShortName);
+  if (cached) return cached;
+  try {
+    const apiBaseUrl =
+      import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+    const res = await fetch(
+      `${apiBaseUrl}/routes/${encodeURIComponent(routeShortName)}/shape`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const coords = data.geometry?.coordinates as [number, number][] | undefined;
+    if (coords && coords.length >= 2) {
+      cache.set(routeShortName, coords);
+      return coords;
+    }
+  } catch {
+    // Caller falls back to a straight line
+  }
+  return null;
+}
+
+/** Street-following walking path from the Mapbox Directions API. */
+async function fetchWalkingPath(
+  from: [number, number],
+  to: [number, number],
+  token: string,
+  cache: Map<string, [number, number][]>
+): Promise<[number, number][] | null> {
+  const key = `${from[0].toFixed(5)},${from[1].toFixed(5)}|${to[0].toFixed(5)},${to[1].toFixed(5)}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+  try {
+    const res = await fetch(
+      `https://api.mapbox.com/directions/v5/mapbox/walking/${from[0]},${from[1]};${to[0]},${to[1]}?geometries=geojson&overview=full&access_token=${token}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const coords = data.routes?.[0]?.geometry?.coordinates as
+      | [number, number][]
+      | undefined;
+    if (coords && coords.length >= 2) {
+      cache.set(key, coords);
+      return coords;
+    }
+  } catch {
+    // Network failure → caller falls back to a straight line
+  }
+  return null;
+}
 
 function setupMapLayers(
   map: mapboxgl.Map,

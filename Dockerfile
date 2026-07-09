@@ -18,7 +18,10 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN pnpm run build
 
 # ── Stage 2: Runtime (Python + Nginx + Supervisor) ──
-FROM python:3.11-slim
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
@@ -33,6 +36,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Backend source
 COPY backend/ .
+
+# Extract the bundled static GTFS data at build time so startup doesn't
+# depend on downloading it from Calgary's open-data portal (a slow or
+# failed download would trip the platform health check).
+RUN if [ -f gtfs_static.zip ]; then \
+      python -c "import zipfile; zipfile.ZipFile('gtfs_static.zip').extractall('gtfs_data')"; \
+    fi
 
 # Frontend build artifacts → Nginx document root
 COPY --from=frontend-build /frontend/dist /var/www/html
