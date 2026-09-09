@@ -92,6 +92,7 @@ export default function MapSearch({ onGetDirections, onClear, onSelect, classNam
           center: coordinates,
           zoom: MAP_CONSTANTS.FLY_TO.ZOOM,
           speed: MAP_CONSTANTS.FLY_TO.SPEED,
+          curve: MAP_CONSTANTS.FLY_TO.CURVE,
           duration: MAP_CONSTANTS.FLY_TO.DURATION,
           essential: true,
         });
@@ -148,11 +149,14 @@ export default function MapSearch({ onGetDirections, onClear, onSelect, classNam
               className="flex-1"
             />
             {displayValue && !isLoading && (
-              <X
-                className="size-4 shrink-0 text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+              <button
+                type="button"
                 onClick={clearSearch}
                 aria-label="Clear search"
-              />
+                className="-m-1.5 p-1.5 shrink-0 rounded-full text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              >
+                <X className="size-4" />
+              </button>
             )}
             {isLoading && (
               <Loader

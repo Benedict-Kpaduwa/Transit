@@ -150,7 +150,9 @@ export function SidebarContent({
   return (
     <div
       className={cn(
-        "flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar transition-all duration-300",
+        // fade-scroll-y: content dissolves at the top/bottom edges instead of
+        // meeting the header/footer at a hard line (§ materials).
+        "flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar fade-scroll-y transition-all duration-300",
         state === "expanded" ? "px-3 py-2 space-y-4" : "px-1 py-2",
         className
       )}

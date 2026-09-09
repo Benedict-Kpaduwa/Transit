@@ -143,6 +143,96 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Tabular ships an optical-size axis; let the browser tune it per size. */
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Size-specific tracking (§ typography): large text reads too loose as it
+     grows, so tighten it; body copy stays at the font's natural spacing. */
+  h1,
+  .text-display {
+    letter-spacing: -0.02em;
+  }
+  h2,
+  h3 {
+    letter-spacing: -0.01em;
+  }
+
+  /* Press feedback belongs on pointer-down, not release (§1 Response).
+     Every button/role=button gets an instant, subtle depress unless it
+     opts out with .no-press or is disabled. */
+  button:not(:disabled):not([aria-disabled="true"]):not(.no-press),
+  [role="button"]:not([aria-disabled="true"]):not(.no-press) {
+    -webkit-tap-highlight-color: transparent;
+    transition-property: transform, scale, background-color, border-color,
+      color, opacity, box-shadow, filter;
+    transition-duration: 140ms;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  button:not(:disabled):not([aria-disabled="true"]):not(.no-press):active,
+  [role="button"]:not([aria-disabled="true"]):not(.no-press):active {
+    /* Use the `scale` property (not `transform`) so a component's own
+       Tailwind `active:scale-*` overrides this rather than compounding. */
+    scale: 0.97;
+  }
+}
+
+/* Momentum-friendly horizontal scrollers snap to each card. */
+.snap-x-cards {
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.snap-x-cards > * {
+  scroll-snap-align: start;
+}
+
+/* Soft scroll edges instead of a hard 1px divider (§ materials): content
+   dissolves where it passes beneath floating chrome, only where it overlaps.
+   `.fade-scroll-y` masks a scroll region's own top/bottom edges (header is a
+   sibling above it); `.scroll-edge-bottom` drops a short gradient just below a
+   sticky header that lives *inside* the scroll container. */
+.fade-scroll-y {
+  /* Top fade by default (content slipping under a header); opt into a
+     bottom fade with --fade-bottom where a footer overlaps too. */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top, 16px),
+    #000 calc(100% - var(--fade-bottom, 0px)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top, 16px),
+    #000 calc(100% - var(--fade-bottom, 0px)),
+    transparent 100%
+  );
+}
+
+.scroll-edge-bottom::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 1.25rem;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    var(--edge-color, rgb(9 9 11 / 0.75)),
+    transparent
+  );
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .fade-scroll-y {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .scroll-edge-bottom::after {
+    display: none;
   }
 }
 
@@ -183,7 +273,9 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.1s linear;
+  /* No CSS tween here — vehicle-animator.ts is the single smoothing layer
+     (one rAF loop). A transform transition on top of it double-animates
+     and adds visible lag. */
 }
 
 .train-core {
@@ -251,17 +343,14 @@ body,
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  /* Always faintly visible so the scroll affordance is discoverable;
+     firms up on hover. */
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-/* Hide scrollbar until hover */
-.custom-scrollbar:not(:hover)::-webkit-scrollbar-thumb {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.28);
 }
 
 /* User location marker */
@@ -366,4 +455,88 @@ body,
 
 .animate-location-bounce {
   animation: location-bounce 1s ease-in-out infinite;
+}
+
+/* ------------------------------------------------------------------ *
+ * Accessibility preferences (§ Reduced motion & accessibility)
+ * ------------------------------------------------------------------ */
+
+/* Reduced motion: keep feedback, drop the vestibular parts. Looping
+   ambient animation, parallax, slides and springs collapse to an
+   instant state change or a short opacity fade. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* A rotating loading indicator is status, not decoration — keep it
+     spinning (small, in-place, not vestibular). */
+  .animate-spin {
+    animation: spin 1s linear infinite !important;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Decorative infinite loops: stop them outright rather than freeze
+     them mid-frame. */
+  .animate-location-bounce,
+  .train-ping,
+  .animate-spin-slow,
+  .animate-pulse,
+  .animate-ping {
+    animation: none !important;
+  }
+
+  /* Theme change: a full-screen clip-path wipe is exactly the kind of
+     large moving surface to avoid — cross-fade instead. */
+  ::view-transition-new(root) {
+    animation: vt-fade 120ms ease forwards !important;
+  }
+  ::view-transition-old(root) {
+    animation: none !important;
+  }
+}
+
+@keyframes vt-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Reduced transparency: swap translucent + blurred materials for solid
+   surfaces so text never fights a moving background. */
+@media (prefers-reduced-transparency: reduce) {
+  [class*="backdrop-blur"] {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .bg-zinc-950\/80,
+  .bg-zinc-950\/90,
+  .bg-zinc-900\/95,
+  .bg-zinc-900\/90,
+  .bg-zinc-900\/80,
+  .bg-black\/90 {
+    background-color: rgb(9 9 11) !important;
+  }
+  .dark\:bg-zinc-900\/95 {
+    background-color: rgb(24 24 27) !important;
+  }
+}
+
+/* Increased contrast: near-solid backgrounds with a defined border. */
+@media (prefers-contrast: more) {
+  [class*="backdrop-blur"] {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .border-zinc-800,
+  .border-zinc-800\/50,
+  .border-zinc-700\/50 {
+    border-color: rgb(161 161 170) !important;
+  }
 }

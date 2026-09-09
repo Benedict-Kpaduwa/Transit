@@ -5,7 +5,7 @@ import SplashScreen from "@/components/shared/splash-screen";
 import ErrorScreen from "@/components/shared/error-screen";
 import { useAllRouteLines, useAllStationsByLineSorted } from "@/hooks/queries";
 import { useMapStore } from "@/stores/useMapStore";
-import { MobileDashboard } from "@/components/mobile-dashboard";
+import { MobileHome } from "@/components/mobile-home";
 import MapSearch from "@/components/map/map-search";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
 import type { Station } from "@/types";
@@ -50,8 +50,8 @@ const CalgaryMap = () => {
       zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
       pitch: MAP_CONSTANTS.DEFAULT_PITCH,
       bearing: 0,
-      speed: 1.2,
-      curve: 1.42,
+      speed: MAP_CONSTANTS.CAMERA.SPEED,
+      curve: MAP_CONSTANTS.CAMERA.CURVE,
       essential: true,
     });
   }, [mapInstance, setShowTrainLines]);
@@ -90,7 +90,17 @@ const CalgaryMap = () => {
   );
 
   if (isLoading) {
-    return <SplashScreen />;
+    return (
+      <SplashScreen
+        steps={[
+          { label: "Loading station data", done: !stationsLoading && !!stations },
+          {
+            label: "Fetching route lines",
+            done: !routeLinesLoading && !!routeLines,
+          },
+        ]}
+      />
+    );
   }
 
   if (error) {
@@ -104,33 +114,16 @@ const CalgaryMap = () => {
   }
 
   return (
-    <div className="relative flex flex-col lg:flex-row h-dvh w-full bg-linear-to-br from-gray-900 via-black to-gray-900 overflow-hidden">
-      {/* Background patterns */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 left-0 w-full h-1 bg-linear-to-r from-transparent via-blue-500/20 to-transparent animate-pulse"></div>
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-blue-500/5 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-red-500/5 rounded-full blur-3xl"></div>
-
-        <div
-          className="absolute inset-0 opacity-[0.02]"
-          style={{
-            backgroundImage: `linear-gradient(to right, #4a5568 1px, transparent 1px),
-                           linear-gradient(to bottom, #4a5568 1px, transparent 1px)`,
-            backgroundSize: "40px 40px",
-          }}
-        ></div>
-      </div>
-
-      {/* Mobile Dashboard - Rendered on top of map when in 'home' view */}
-      {isMobile && mobileView === "home" && (
-        <div className="fixed inset-0 z-50 overflow-y-auto overflow-x-hidden bg-black">
-          <MobileDashboard />
-        </div>
-      )}
+    <div className="relative flex flex-col lg:flex-row h-dvh w-full bg-zinc-950 overflow-hidden animate-in fade-in duration-500">
+      {/* Mobile "home" dashboard — a sheet over the map; slides down to
+          reveal the map, slides back up to return. */}
+      {isMobile && <MobileHome open={mobileView === "home"} />}
 
       {/* Mobile Header - Always visible when Map is active on mobile */}
       {isMobile && mobileView === "map" && (
-        <div className="lg:hidden shrink-0 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-900/50 p-4 pt-safe-4 z-20">
+        <div className="lg:hidden shrink-0 relative scroll-edge-bottom bg-zinc-950/80 backdrop-blur-xl p-4 pt-safe-4 z-20 animate-in fade-in slide-in-from-top-2 duration-300"
+          style={{ ["--edge-color" as string]: "rgb(9 9 11 / 0.55)" }}
+        >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               {/* Back to Home Button on Map View */}

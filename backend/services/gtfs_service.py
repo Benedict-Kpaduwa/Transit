@@ -837,45 +837,77 @@ def get_route_shape_segment(
     if shapes_df is None:
         return None
     
+    import math
+
+    # Scale longitude so "closest" is measured in real ground distance, not raw
+    # degrees (a degree of longitude at Calgary is ~0.63x a degree of latitude).
+    lng_scale = math.cos(math.radians((start_lat + end_lat) / 2)) or 1.0
+
     def find_closest_index(coords, lat, lon):
         best_idx = 0
         min_dist = float("inf")
         for i, (lng, lt) in enumerate(coords):
-            dist = (lt - lat) ** 2 + (lng - lon) ** 2
+            dlat = lt - lat
+            dlng = (lng - lon) * lng_scale
+            dist = dlat * dlat + dlng * dlng
             if dist < min_dist:
                 min_dist = dist
                 best_idx = i
         return best_idx, min_dist
-    
+
+    def seg_length_deg(coords):
+        total = 0.0
+        for i in range(1, len(coords)):
+            dlat = coords[i][1] - coords[i - 1][1]
+            dlng = (coords[i][0] - coords[i - 1][0]) * lng_scale
+            total += math.hypot(dlat, dlng)
+        return total
+
+    straight = math.hypot(
+        end_lat - start_lat, (end_lon - start_lon) * lng_scale
+    )
+    # Reject a slice that loops out and back instead of running stop-to-stop.
+    max_len = max(straight * 2.8, straight + 0.014)  # ~1.5 km slack
+    # A shape that never comes within ~350 m of a stop is the wrong pattern.
+    max_offset_sq = (0.0032) ** 2
+
     best_segment = None
-    best_length = 0
-    
-    # Try each shape (covers both directions)
+    best_score = float("inf")
+
+    # Try each shape (covers both directions / branches) and keep the one whose
+    # geometry actually passes closest to BOTH stops with a sane span length.
     for shape_id in shape_ids:
         shape_points = shapes_df[shapes_df["shape_id"] == shape_id].sort_values("shape_pt_sequence")
         if shape_points.empty:
             shape_points = shapes_df[shapes_df["shape_id"].astype(str) == str(shape_id)].sort_values("shape_pt_sequence")
         if shape_points.empty:
             continue
-        
+
         full_coords = [[float(row["shape_pt_lon"]), float(row["shape_pt_lat"])] for _, row in shape_points.iterrows()]
         if len(full_coords) < 2:
             continue
-        
+
         start_idx, start_dist = find_closest_index(full_coords, start_lat, start_lon)
         end_idx, end_dist = find_closest_index(full_coords, end_lat, end_lon)
-        
-        # Swap if needed to get correct order along the shape
+
+        if start_dist > max_offset_sq or end_dist > max_offset_sq:
+            continue
+
+        # Order along the shape (a static polyline reads the same either way).
         if start_idx > end_idx:
             start_idx, end_idx = end_idx, start_idx
-        
+
         segment_coords = full_coords[start_idx : end_idx + 1]
-        
-        # Pick the longest valid segment (more points = better coverage)
-        if len(segment_coords) > best_length:
-            best_length = len(segment_coords)
+        if len(segment_coords) < 2:
+            continue
+        if seg_length_deg(segment_coords) > max_len:
+            continue
+
+        score = start_dist + end_dist
+        if score < best_score:
+            best_score = score
             best_segment = segment_coords
-    
+
     if best_segment and len(best_segment) >= 2:
         # IMPORTANT: Ensure the line connects to the actual start and end points
         # Prepend start point if not already close

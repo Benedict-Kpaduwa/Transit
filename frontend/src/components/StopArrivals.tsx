@@ -164,7 +164,7 @@ export default function StopArrivals({
                   {formatArrivalTime(arrival.minutes_away)}
                 </span>
                 {compact && arrival.delay_minutes > 0 && (
-                  <span className="text-[9px] text-orange-400">
+                  <span className="text-[10px] text-orange-400">
                     +{arrival.delay_minutes}
                   </span>
                 )}

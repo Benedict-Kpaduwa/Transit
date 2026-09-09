@@ -160,7 +160,7 @@ function NearbyDepartures({
                       />
                     )}
                     <span
-                      className="text-[9px] font-bold px-1 py-0.5 rounded shrink-0"
+                      className="text-[10px] font-bold px-1 py-0.5 rounded shrink-0"
                       style={{
                         backgroundColor: arrival.color,
                         color: "white",
@@ -268,12 +268,19 @@ const AppSidebar = () => {
       const newMode = theme === "dark" ? "light" : "dark";
       const root = document.documentElement;
 
-      if (!document.startViewTransition) {
+      // A full-screen clip-path wipe is a large moving surface — skip it
+      // when the platform can't do view transitions or the user has asked
+      // for reduced motion (the CSS also degrades it to a short fade).
+      const reduceMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches;
+
+      if (!document.startViewTransition || reduceMotion) {
         setTheme(newMode);
         return;
       }
 
-      // Set coordinates from the click event
+      // Anchor the reveal to the click so it emerges from the control.
       if (e) {
         root.style.setProperty("--x", `${e.clientX}px`);
         root.style.setProperty("--y", `${e.clientY}px`);
@@ -290,7 +297,7 @@ const AppSidebar = () => {
   if (isCollapsed) {
     return (
       <Sidebar className="border-r border-sidebar-border">
-        <SidebarHeader className="border-b border-sidebar-border flex items-center justify-center py-4">
+        <SidebarHeader className="flex items-center justify-center py-4">
           <div className="relative">
             <div className="flex size-10 items-center justify-center rounded-xl bg-sidebar-primary text-sidebar-primary-foreground shadow-lg shadow-sidebar-primary/25">
               <Train className="size-5" />
@@ -362,7 +369,7 @@ const AppSidebar = () => {
   return (
     <Sidebar className="border-r border-sidebar-border">
       {/* Header */}
-      <SidebarHeader className="border-b border-sidebar-border px-5">
+      <SidebarHeader className="px-5">
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-3">
             <div className="relative">

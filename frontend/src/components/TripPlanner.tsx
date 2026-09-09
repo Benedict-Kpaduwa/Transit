@@ -454,7 +454,7 @@ export default function TripPlanner({
       {!isExpanded && (
         <button
           onClick={() => setIsExpanded(true)}
-          className="flex items-center gap-3 w-full px-4 py-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl shadow-xl hover:bg-zinc-800/95 transition-all group"
+          className="flex items-center gap-3 w-full px-4 py-3 bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-2xl shadow-xl hover:bg-zinc-800/95 transition-all group"
         >
           <div className="p-2 bg-blue-500/20 rounded-xl">
             <Navigation className="w-5 h-5 text-blue-400" />
@@ -471,7 +471,7 @@ export default function TripPlanner({
 
       {/* Expanded state */}
       {isExpanded && (
-        <div className="bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[calc(100dvh-9rem)]">
+        <div className="bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[calc(100dvh-9rem)]">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
             <div className="flex items-center gap-2">
@@ -480,7 +480,7 @@ export default function TripPlanner({
             </div>
             <button
               onClick={() => setIsExpanded(false)}
-              className="p-1 hover:bg-zinc-800 rounded-lg transition-colors"
+              className="-m-1 p-2 hover:bg-zinc-800 rounded-lg transition-colors"
               aria-label="Close trip planner"
             >
               <X className="w-4 h-4 text-zinc-400" />

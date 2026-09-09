@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType } from "react";
 import { Train, Bus, MapPin, Navigation, Radio } from "lucide-react";
 import { useMapStore } from "@/stores/useMapStore";
 import { useNearbyArrivals, formatArrivalTime, getArrivalUrgencyColor } from "@/hooks/useArrivals";
@@ -30,7 +30,10 @@ export function MobileDashboard() {
   return (
     <div className="flex flex-col min-h-dvh bg-zinc-950 text-white pb-safe-10 overflow-x-hidden">
       {/* Header / Search */}
-      <div className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-900 p-5 pt-safe-4">
+      <div
+        className="sticky top-0 z-20 scroll-edge-bottom bg-zinc-950/80 backdrop-blur-xl p-5 pt-safe-4"
+        style={{ ["--edge-color" as string]: "rgb(9 9 11 / 0.6)" }}
+      >
         <h1 className="text-2xl font-black mb-1 tracking-tight">Where to?</h1>
         <MapSearch 
           onSelect={() => setMobileView("map")}
@@ -44,24 +47,24 @@ export function MobileDashboard() {
           <div className="flex items-center justify-between mb-4 px-1">
             <h2 className="text-sm font-black uppercase tracking-widest text-zinc-500">Quick Actions</h2>
           </div>
-          <div className="flex gap-4 overflow-x-auto pb-4 -mx-5 px-5 scrollbar-hide no-scrollbar">
-            <QuickActionButton 
-              icon={Radio} 
-              label="Live Trains" 
+          <div className="flex gap-4 overflow-x-auto pb-4 -mx-5 px-5 scrollbar-hide no-scrollbar snap-x-cards">
+            <QuickActionButton
+              icon={Radio}
+              label="Live Trains"
               color={showLiveTrains ? "bg-red-600 shadow-red-500/20" : "bg-zinc-900 border border-zinc-900"}
-              onClick={() => { setShowLiveTrains(!showLiveTrains); setMobileView("map"); }} 
+              onClick={() => { setShowLiveTrains(!showLiveTrains); setMobileView("map"); }}
             />
-            <QuickActionButton 
-              icon={Bus} 
-              label="Bus Stops" 
+            <QuickActionButton
+              icon={MapPin}
+              label="Bus Stops"
               color={showBusStops ? "bg-green-600 shadow-green-500/20" : "bg-zinc-900 border border-zinc-900"}
-              onClick={() => { setShowBusStops(!showBusStops); setMobileView("map"); }} 
+              onClick={() => { setShowBusStops(!showBusStops); setMobileView("map"); }}
             />
-            <QuickActionButton 
-              icon={() => <span className="text-2xl">🚌</span>} 
-              label="Live Buses" 
+            <QuickActionButton
+              icon={Bus}
+              label="Live Buses"
               color={showLiveBuses ? "bg-emerald-600 shadow-emerald-500/20" : "bg-zinc-900 border border-zinc-900"}
-              onClick={() => { setShowLiveBuses(!showLiveBuses); setMobileView("map"); }} 
+              onClick={() => { setShowLiveBuses(!showLiveBuses); setMobileView("map"); }}
             />
             <QuickActionButton 
               icon={Train} 
@@ -74,9 +77,9 @@ export function MobileDashboard() {
 
         {/* Plan a Trip Card */}
         <section>
-           <button 
+           <button
              onClick={() => setMobileView("map")}
-             className="w-full bg-linear-to-br from-blue-600 to-indigo-700 p-6 rounded-[2.5rem] text-left relative overflow-hidden group shadow-xl shadow-blue-500/20"
+             className="w-full bg-linear-to-br from-blue-600 to-indigo-700 p-6 rounded-[2.5rem] text-left relative overflow-hidden group shadow-xl shadow-blue-500/20 transition-transform duration-150 ease-out active:scale-[0.98]"
            >
              <div className="relative z-10">
                <div className="bg-white/20 w-fit p-3 rounded-2xl mb-4 backdrop-blur-md">
@@ -138,7 +141,7 @@ export function MobileDashboard() {
 }
 
 interface QuickActionButtonProps {
-  icon: ComponentType<{ className?: string }> | (() => ReactNode);
+  icon: ComponentType<{ className?: string }>;
   label: string;
   color: string;
   onClick: () => void;
@@ -152,16 +155,12 @@ function QuickActionButton({ icon: Icon, label, color, onClick }: QuickActionBut
       className="flex flex-col items-center gap-3 shrink-0 group"
     >
       <div className={cn(
-        "size-16 rounded-[1.75rem] flex items-center justify-center text-white shadow-lg transition-all duration-300 group-active:scale-95",
+        "size-16 rounded-[1.75rem] flex items-center justify-center text-white shadow-lg transition-transform duration-150 ease-out group-active:scale-90",
         color
       )}>
-        {typeof Icon === 'function' && !Icon.prototype?.render ? (
-          (Icon as () => ReactNode)()
-        ) : (
-          <Icon className="size-7" />
-        )}
+        <Icon className="size-7" />
       </div>
-      <span className="text-[10px] font-black uppercase tracking-tighter text-zinc-500">{label}</span>
+      <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">{label}</span>
     </button>
   );
 }

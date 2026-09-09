@@ -15,10 +15,12 @@ import {
   WifiOff,
   Bus,
   Train,
+  MapPin,
 } from "lucide-react";
 import { MapContext } from "@/context/map-context";
 import MapStyles from "@/components/map/map-styles";
 import MapControls from "@/components/map/map-controls";
+import StationSheet from "@/components/map/station-sheet";
 import VehicleLayer, {
   type VehiclePositionData,
 } from "@/components/map/vehicle-layer";
@@ -26,10 +28,16 @@ import { vehicleAnimator } from "@/lib/vehicle-animator";
 import Vehicle3DLayer from "@/components/map/Vehicle3DLayer";
 import { ErrorBoundary } from "./shared/ErrorBoundary";
 import { MAP_CONSTANTS } from "@/lib/mapbox/constants";
+import {
+  resolveLegGeometry,
+  slicePolylineBetween,
+  distanceMeters as geoDistanceMeters,
+  type LngLat,
+} from "@/lib/geo/polyline";
 import { useTheme } from "@/stores/use-theme-store";
 import { useMapStore } from "@/stores/useMapStore";
 import { useSidebar } from "@/components/ui/sidebar";
-import { useStationArrivals, formatArrivalTime, getArrivalUrgencyColor } from "@/hooks/useArrivals";
+import { useStationArrivals } from "@/hooks/useArrivals";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { LocationMarker } from "./location-marker";
 import { LocationPopup } from "./location-popup";
@@ -1036,150 +1044,51 @@ const Map = ({
     };
   }, [mapLoaded, userLocation, createUserLocationEl]);
 
-  // Helper function to find the segment of track between two points
+  // Slice the correct CTrain track polyline to the boarding→alighting span.
+  // Picks the track branch whose geometry actually passes near *both* stops and
+  // whose sliced length is close to the straight-line distance — anything that
+  // loops out to the end of the line and back is rejected in favour of a clean
+  // straight segment.
   const getTrackSegment = useCallback(
     (
       fromCoords: [number, number],
       toCoords: [number, number],
       lineName: string
     ): [number, number][] => {
-      // Find ALL route lines for this train line (may have multiple branches)
       const targetLine = lineName.includes("Red") ? "RED" : "BLUE";
-      const matchingTracks = routeLines.filter(
-        (r) => r.properties.line === targetLine
+      const tracks = routeLines.filter(
+        (r) =>
+          r.properties.line === targetLine &&
+          r.coordinates &&
+          r.coordinates.length >= 2
       );
+      if (tracks.length === 0) return [fromCoords, toCoords];
 
-      if (matchingTracks.length === 0) {
-        return [fromCoords, toCoords]; // Fallback to direct line
-      }
+      const straight = geoDistanceMeters(fromCoords as LngLat, toCoords as LngLat);
+      const maxLen = Math.max(straight * 2.8, straight + 1500);
 
-      // Helper to find closest point index and distance
-      const findClosestPoint = (coords: [number, number][], point: [number, number]) => {
-        let closestIdx = 0;
-        let minDist = Infinity;
-        for (let i = 0; i < coords.length; i++) {
-          const dx = coords[i][0] - point[0];
-          const dy = coords[i][1] - point[1];
-          const dist = dx * dx + dy * dy;
-          if (dist < minDist) {
-            minDist = dist;
-            closestIdx = i;
-          }
-        }
-        return { idx: closestIdx, dist: minDist };
-      };
-
-      // Find the track that best covers both endpoints (minimizes total distance to endpoints)
-      let bestTrack: [number, number][] | null = null;
+      let best: [number, number][] | null = null;
       let bestScore = Infinity;
-      let bestFromIdx = 0;
-      let bestToIdx = 0;
-
-      for (const track of matchingTracks) {
-        if (!track.coordinates || track.coordinates.length < 2) continue;
-        
-        const fromResult = findClosestPoint(track.coordinates, fromCoords);
-        const toResult = findClosestPoint(track.coordinates, toCoords);
-        
-        // Score = sum of distances to both endpoints (lower is better)
-        const score = fromResult.dist + toResult.dist;
-        
+      for (const track of tracks) {
+        const sliced = slicePolylineBetween(
+          track.coordinates as LngLat[],
+          fromCoords as LngLat,
+          toCoords as LngLat
+        );
+        if (sliced.fromOffsetMeters > 400 || sliced.toOffsetMeters > 400) continue;
+        if (sliced.lengthMeters > maxLen) continue;
+        const score = sliced.fromOffsetMeters + sliced.toOffsetMeters;
         if (score < bestScore) {
           bestScore = score;
-          bestTrack = track.coordinates;
-          bestFromIdx = fromResult.idx;
-          bestToIdx = toResult.idx;
+          best = [
+            fromCoords,
+            ...sliced.coords.slice(1, -1),
+            toCoords,
+          ] as [number, number][];
         }
       }
 
-      if (!bestTrack) {
-        return [fromCoords, toCoords];
-      }
-
-      // Extract the segment (handle both directions)
-      // Only extend to track endpoints if the station is geographically close to the endpoint
-      const trackLength = bestTrack.length;
-      const trackStart = bestTrack[0];
-      const trackEnd = bestTrack[trackLength - 1];
-      
-      // Calculate distances from from/to coords to track endpoints (squared, for comparison)
-      const distToTrackStart = (coords: [number, number]) => {
-        const dx = coords[0] - trackStart[0];
-        const dy = coords[1] - trackStart[1];
-        return dx * dx + dy * dy;
-      };
-      const distToTrackEnd = (coords: [number, number]) => {
-        const dx = coords[0] - trackEnd[0];
-        const dy = coords[1] - trackEnd[1];
-        return dx * dx + dy * dy;
-      };
-      
-      // Threshold: ~200m in degrees squared (roughly 0.002 degrees = 200m at Calgary's latitude)
-      const geoThreshold = 0.002 * 0.002;
-      
-      let startIdx = bestFromIdx;
-      let endIdx = bestToIdx;
-      
-      // Determine which coord is closer to track start vs end
-      const fromIsStart = startIdx < endIdx ? true : false;
-      const startCoord = fromIsStart ? fromCoords : toCoords;
-      const endCoord = fromIsStart ? toCoords : fromCoords;
-      
-      // Swap if needed to ensure startIdx <= endIdx
-      if (startIdx > endIdx) {
-        [startIdx, endIdx] = [endIdx, startIdx];
-      }
-      
-      // Only extend to track start if station is actually near the track start geographically
-      if (startIdx < 20 && distToTrackStart(startCoord) < geoThreshold) {
-        startIdx = 0;
-      }
-      
-      // Only extend to track end if station is actually near the track end geographically
-      if (endIdx > trackLength - 20 - 1 && distToTrackEnd(endCoord) < geoThreshold) {
-        endIdx = trackLength - 1;
-      }
-      
-      const segment = bestTrack.slice(startIdx, endIdx + 1);
-
-      // Ensure the segment starts and ends at the exact station coordinates
-      // This fixes gaps between transit and walking segments
-      let result: [number, number][];
-      
-      // Reverse if original direction was reverse
-      if (bestFromIdx > bestToIdx) {
-        result = segment.reverse();
-      } else {
-        result = segment;
-      }
-      
-      // Always ensure first point is exactly fromCoords and last is exactly toCoords
-      // This guarantees seamless connection with walking segments
-      if (result.length > 0) {
-        // Check if first point is significantly different from fromCoords
-        const firstPoint = result[0];
-        const distFromStart = Math.sqrt(
-          Math.pow(firstPoint[0] - fromCoords[0], 2) + 
-          Math.pow(firstPoint[1] - fromCoords[1], 2)
-        );
-        if (distFromStart > 0.00005) { // ~5 meters threshold
-          result = [fromCoords, ...result];
-        }
-        
-        // Check if last point is significantly different from toCoords
-        const lastPoint = result[result.length - 1];
-        const distFromEnd = Math.sqrt(
-          Math.pow(lastPoint[0] - toCoords[0], 2) + 
-          Math.pow(lastPoint[1] - toCoords[1], 2)
-        );
-        if (distFromEnd > 0.00005) { // ~5 meters threshold
-          result = [...result, toCoords];
-        }
-      } else {
-        result = [fromCoords, toCoords];
-      }
-      
-      return result;
+      return best ?? [fromCoords, toCoords];
     },
     [routeLines]
   );
@@ -1269,21 +1178,38 @@ const Map = ({
 
         let routeCoordinates: [number, number][] | null;
 
-        if (segment.geometry?.coordinates) {
-          // Trim to the boarding→alighting span — full-route shapes would
-          // overshoot both stops and draw loops past the destination.
-          routeCoordinates = trimShapeToSpan(
-            segment.geometry.coordinates as [number, number][],
-            fromCoords,
-            toCoords
-          );
-        } else if (segment.vehicle_type === "CTrain") {
-          // Fallback: Extract CTrain segment from local track data
-          routeCoordinates = getTrackSegment(
+        const backendShape = segment.geometry?.coordinates as
+          | LngLat[]
+          | undefined;
+
+        if (segment.vehicle_type === "CTrain") {
+          // Prefer the real rail alignment we already have loaded. Only fall
+          // back to the backend shape if the track slice doesn't fit (e.g. an
+          // interlined downtown span), and to a straight line if neither does.
+          const viaTrack = getTrackSegment(
             fromCoords,
             toCoords,
             segment.line || "Red Line"
           );
+          if (viaTrack.length > 2) {
+            routeCoordinates = viaTrack;
+          } else {
+            routeCoordinates = resolveLegGeometry(
+              backendShape,
+              fromCoords as LngLat,
+              toCoords as LngLat
+            ).coords as [number, number][];
+          }
+        } else if (backendShape) {
+          // Trim the backend shape to the boarding→alighting span. If it
+          // doesn't pass near both stops, or the trimmed span balloons past a
+          // sane detour, `resolveLegGeometry` returns a clean straight line
+          // instead of a loop across the city.
+          routeCoordinates = resolveLegGeometry(
+            backendShape,
+            fromCoords as LngLat,
+            toCoords as LngLat
+          ).coords as [number, number][];
         } else {
           // No geometry (typical for bus legs) — fetch the route's GTFS
           // shape in draw() instead of drawing a straight line across town
@@ -1373,7 +1299,15 @@ const Map = ({
             routeShapeCacheRef.current
           );
           if (shape) {
-            route.coordinates = trimShapeToSpan(shape, route.from, route.to);
+            // Bus shapes span the whole route in one direction; slice to the
+            // ridden span, and drop back to a straight line if the shape
+            // doesn't line up with both stops.
+            route.coordinates = resolveLegGeometry(
+              shape as LngLat[],
+              route.from as LngLat,
+              route.to as LngLat,
+              { maxOffsetMeters: 250, detourFactor: 2.2, slackMeters: 800 }
+            ).coords as [number, number][];
           }
         }
         if (!route.coordinates) route.coordinates = [route.from, route.to];
@@ -1865,7 +1799,7 @@ const Map = ({
         {/* Vehicle Tracking Panel - Only show when tracking a vehicle */}
         {trackedVehicle && (
           <div className="absolute bottom-20 left-4 xl:left-7 z-10 max-w-[min(280px,calc(100vw-6rem))] mb-safe">
-            <div className="bg-black/90 backdrop-blur-sm border border-zinc-700 rounded-2xl p-3 xl:p-4 min-w-[180px] xl:min-w-[200px]">
+            <div className="bg-black/90 backdrop-blur-xl border border-zinc-700 rounded-2xl p-3 xl:p-4 min-w-[180px] xl:min-w-[200px]">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   {trackedVehicle.vehicleType === "Bus" ? (
@@ -1885,7 +1819,7 @@ const Map = ({
                 </div>
                 <button
                   onClick={stopTracking}
-                  className="p-1 hover:bg-white/10 rounded-lg transition-colors"
+                  className="-m-1.5 p-1.5 hover:bg-white/10 rounded-lg transition-colors"
                   aria-label="Stop tracking"
                 >
                   <X className="size-4 text-zinc-400" />
@@ -1911,9 +1845,12 @@ const Map = ({
                 zoom: MAP_CONSTANTS.DEFAULT_ZOOM,
                 pitch: MAP_CONSTANTS.DEFAULT_PITCH,
                 bearing: 0,
+                speed: MAP_CONSTANTS.CAMERA.SPEED,
+                curve: MAP_CONSTANTS.CAMERA.CURVE,
+                essential: true,
               })
             }
-            className="p-2.5 xl:p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl hover:bg-zinc-800 transition-all"
+            className="p-2.5 xl:p-3 bg-zinc-900/95 backdrop-blur-sm border border-zinc-800 rounded-2xl hover:bg-zinc-800 active:bg-zinc-700 transition-all"
             aria-label="Reset map view"
           >
             <Zap className="w-5 h-5 text-zinc-300" />
@@ -1981,7 +1918,7 @@ const Map = ({
                 aria-label={showBusStops ? "Hide bus stops" : "Show bus stops"}
                 title={showBusStops ? "Hide bus stops" : "Show bus stops"}
               >
-                <Bus
+                <MapPin
                   className={`w-5 h-5 ${
                     showBusStops ? "text-white" : "text-zinc-300"
                   }`}
@@ -2004,9 +1941,11 @@ const Map = ({
                 {isFetchingBuses && showLiveBuses ? (
                   <Loader2 className="w-5 h-5 text-white animate-spin" />
                 ) : (
-                  <span className="text-lg" role="img" aria-label="bus">
-                    🚌
-                  </span>
+                  <Bus
+                    className={`w-5 h-5 ${
+                      showLiveBuses ? "text-white" : "text-zinc-300"
+                    }`}
+                  />
                 )}
               </button>
 
@@ -2089,95 +2028,15 @@ const Map = ({
           </div>
         )}
 
-        {/* Selected Station Info Panel — bottom sheet on mobile, floating card on desktop */}
-        {selectedStation && (
-          <div
-            className={`absolute bg-[#18181b]/95 backdrop-blur-sm border border-zinc-800/50 rounded-2xl shadow-2xl z-20 ${
-              isMobile
-                ? "left-3 right-3 bottom-3 p-4 mb-safe animate-in slide-in-from-bottom-4 duration-300"
-                : "bottom-8 right-20 lg:right-24 p-4 xl:p-5 w-[min(280px,calc(100vw-8rem))] xl:w-[320px] xl:max-w-sm 2xl:w-[360px] 2xl:max-w-md"
-            }`}
-          >
-            <button
-              onClick={handleCloseStationInfoWithReset}
-              className="absolute top-4 right-3 text-zinc-500 hover:text-zinc-300 transition-colors"
-              aria-label="Close station info"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <h3 className="text-lg font-semibold text-white mb-3 pr-6">
-              {selectedStation.name}
-            </h3>
-
-            <div className="space-y-2.5 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-zinc-400">Line:</span>
-                <span
-                  className={`font-semibold ${
-                    selectedStation.line === "Red"
-                      ? "text-red-400"
-                      : "text-blue-400"
-                  }`}
-                >
-                  {selectedStation.line} Line
-                </span>
-              </div>
-              {selectedStation.shared && (
-                <div className="bg-amber-500/15 border border-amber-500/25 rounded-lg px-3 py-2">
-                  <p className="text-amber-400 font-medium text-xs">
-                    ⭐ Downtown Transit Mall
-                  </p>
-                </div>
-              )}
-              
-              {/* Arrivals Section */}
-              <div className="mt-4 pt-3 border-t border-zinc-700/50">
-                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">
-                  Upcoming Arrivals
-                </h4>
-                {isLoadingArrivals ? (
-                  <div className="flex items-center gap-2 text-zinc-500">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    <span className="text-xs">Loading arrivals...</span>
-                  </div>
-                ) : stationArrivals?.arrivals && stationArrivals.arrivals.length > 0 ? (
-                  <div className={`space-y-2 overflow-y-auto ${isMobile ? "max-h-[30dvh]" : "max-h-[200px]"}`}>
-                    {stationArrivals.arrivals.slice(0, 6).map((arrival, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between bg-zinc-800/50 rounded-lg px-3 py-2"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Train
-                            className="w-3.5 h-3.5 shrink-0"
-                            style={{ color: arrival.color }}
-                          />
-                          <span
-                            className="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0"
-                            style={{ backgroundColor: arrival.color, color: 'white' }}
-                          >
-                            {arrival.route_short_name}
-                          </span>
-                          <span className="text-xs text-zinc-300 truncate">
-                            {arrival.headsign}
-                          </span>
-                        </div>
-                        <span
-                          className={`text-sm font-bold shrink-0 ml-2 ${getArrivalUrgencyColor(arrival.minutes_away)}`}
-                        >
-                          {formatArrivalTime(arrival.minutes_away)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-zinc-500">No upcoming arrivals</p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Selected Station Info — bottom sheet on mobile (drag to dismiss),
+            floating card on desktop. Enter and exit share one path. */}
+        <StationSheet
+          station={selectedStation}
+          isMobile={isMobile}
+          onClose={handleCloseStationInfoWithReset}
+          arrivals={stationArrivals?.arrivals}
+          isLoadingArrivals={isLoadingArrivals}
+        />
       </div>
       {selectedLocations.map((location) => (
         <LocationMarker
@@ -2205,43 +2064,6 @@ function approxDistanceMeters(a: [number, number], b: [number, number]): number 
   const dLat = (b[1] - a[1]) * 111320;
   const dLng = (b[0] - a[0]) * 111320 * Math.cos((a[1] * Math.PI) / 180);
   return Math.sqrt(dLat * dLat + dLng * dLng);
-}
-
-function closestIndexOnLine(
-  coords: [number, number][],
-  point: [number, number]
-): number {
-  let best = 0;
-  let bestDist = Infinity;
-  for (let i = 0; i < coords.length; i++) {
-    const dx = coords[i][0] - point[0];
-    const dy = coords[i][1] - point[1];
-    const d = dx * dx + dy * dy;
-    if (d < bestDist) {
-      bestDist = d;
-      best = i;
-    }
-  }
-  return best;
-}
-
-/**
- * Slice a route shape to just the boarding→alighting span and pin its
- * endpoints to the stops. Backends sometimes return the vehicle's FULL
- * route shape; drawing it verbatim overshoots past both stops.
- */
-function trimShapeToSpan(
-  coords: [number, number][],
-  from: [number, number],
-  to: [number, number]
-): [number, number][] {
-  if (!coords || coords.length < 2) return [from, to];
-  const i = closestIndexOnLine(coords, from);
-  const j = closestIndexOnLine(coords, to);
-  const span =
-    i <= j ? coords.slice(i, j + 1) : coords.slice(j, i + 1).reverse();
-  if (span.length < 2) return [from, to];
-  return [from, ...span.slice(1, -1), to];
 }
 
 /** Full GTFS shape for a route, from the backend. */
