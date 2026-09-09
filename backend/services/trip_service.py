@@ -217,15 +217,25 @@ async def _build_transit_geometry(
                 shape_lookup, start_lat, start_lon, end_lat, end_lon
             )
             coords = (gtfs_shape or {}).get("coordinates", [])
-            # CTrain shapes track a straight-ish alignment; buses need a stricter
-            # guard because loop-route slices balloon to 4-5x the direct gap.
-            factor = 3.0 if vehicle_type == "CTrain" else 1.9
-            if coords and _shape_within_detour(
-                coords, from_coords, to_coords, factor, 500
-            ):
+            # The GTFS route shape is the *actual* path the vehicle takes, so a
+            # legitimately winding bus route (2-3x the crow-flies gap) must be
+            # kept. Only reject a slice that has clearly wrapped the wrong way
+            # around a loop route (~3.5x+), and fall back to road directions.
+            factor = 3.0 if vehicle_type == "CTrain" else 3.5
+            _ok = bool(coords) and _shape_within_detour(
+                coords, from_coords, to_coords, factor, 1500
+            )
+            print(
+                f"🧭 shape {shape_lookup}: gtfs_pts={len(coords)} ok={_ok} "
+                f"from={from_coords} to={to_coords}"
+            )
+            if _ok:
                 geometry = gtfs_shape
         except Exception as e:
+            import traceback
+
             print(f"⚠️ GTFS shape lookup failed for {shape_lookup}: {e}")
+            traceback.print_exc()
 
     if geometry is None and vehicle_type == "CTrain" and line and have_coords:
         rail = get_ctrain_track_geometry(

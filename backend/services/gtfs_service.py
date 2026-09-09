@@ -843,18 +843,6 @@ def get_route_shape_segment(
     # degrees (a degree of longitude at Calgary is ~0.63x a degree of latitude).
     lng_scale = math.cos(math.radians((start_lat + end_lat) / 2)) or 1.0
 
-    def find_closest_index(coords, lat, lon):
-        best_idx = 0
-        min_dist = float("inf")
-        for i, (lng, lt) in enumerate(coords):
-            dlat = lt - lat
-            dlng = (lng - lon) * lng_scale
-            dist = dlat * dlat + dlng * dlng
-            if dist < min_dist:
-                min_dist = dist
-                best_idx = i
-        return best_idx, min_dist
-
     def seg_length_deg(coords):
         total = 0.0
         for i in range(1, len(coords)):
@@ -863,13 +851,39 @@ def get_route_shape_segment(
             total += math.hypot(dlat, dlng)
         return total
 
+    def near_pass_indices(coords, lat, lon, max_sq):
+        """
+        Every vertex where the shape makes a *local* closest approach to (lat,
+        lon) and is within `max_sq`. A route that doubles back past a stop has
+        two such passes — considering both lets us pick the slice that runs the
+        short way instead of wrapping the whole loop.
+        """
+        dists = []
+        for lng, lt in coords:
+            dlat = lt - lat
+            dlng = (lng - lon) * lng_scale
+            dists.append(dlat * dlat + dlng * dlng)
+        n = len(dists)
+        cands = [
+            (i, dists[i])
+            for i in range(n)
+            if dists[i] <= max_sq
+            and dists[i] <= (dists[i - 1] if i > 0 else math.inf)
+            and dists[i] <= (dists[i + 1] if i < n - 1 else math.inf)
+        ]
+        if not cands:
+            gi = min(range(n), key=lambda k: dists[k])
+            if dists[gi] <= max_sq:
+                cands = [(gi, dists[gi])]
+        return cands
+
     straight = math.hypot(
         end_lat - start_lat, (end_lon - start_lon) * lng_scale
     )
     # Reject a slice that loops out and back instead of running stop-to-stop.
-    max_len = max(straight * 2.8, straight + 0.014)  # ~1.5 km slack
-    # A shape that never comes within ~350 m of a stop is the wrong pattern.
-    max_offset_sq = (0.0032) ** 2
+    max_len = max(straight * 3.2, straight + 0.02)  # ~2 km slack
+    # A shape that never comes within ~400 m of a stop is the wrong pattern.
+    max_offset_sq = (0.0037) ** 2
 
     best_segment = None
     best_score = float("inf")
@@ -887,39 +901,53 @@ def get_route_shape_segment(
         if len(full_coords) < 2:
             continue
 
-        start_idx, start_dist = find_closest_index(full_coords, start_lat, start_lon)
-        end_idx, end_dist = find_closest_index(full_coords, end_lat, end_lon)
-
-        if start_dist > max_offset_sq or end_dist > max_offset_sq:
+        start_cands = near_pass_indices(full_coords, start_lat, start_lon, max_offset_sq)
+        end_cands = near_pass_indices(full_coords, end_lat, end_lon, max_offset_sq)
+        if not start_cands or not end_cands:
             continue
 
-        # Order along the shape (a static polyline reads the same either way).
-        if start_idx > end_idx:
-            start_idx, end_idx = end_idx, start_idx
-
-        segment_coords = full_coords[start_idx : end_idx + 1]
-        if len(segment_coords) < 2:
-            continue
-        if seg_length_deg(segment_coords) > max_len:
-            continue
-
-        score = start_dist + end_dist
-        if score < best_score:
-            best_score = score
-            best_segment = segment_coords
+        # Among every near-pass pairing, take the shortest forward-running span.
+        for s_idx, s_dist in start_cands:
+            for e_idx, e_dist in end_cands:
+                a, b = (s_idx, e_idx) if s_idx <= e_idx else (e_idx, s_idx)
+                segment_coords = full_coords[a : b + 1]
+                if len(segment_coords) < 2:
+                    continue
+                seg_len = seg_length_deg(segment_coords)
+                if seg_len > max_len:
+                    continue
+                score = (s_dist + e_dist) * 1e6 + seg_len
+                if score < best_score:
+                    best_score = score
+                    best_segment = segment_coords
 
     if best_segment and len(best_segment) >= 2:
-        # IMPORTANT: Ensure the line connects to the actual start and end points
-        # Prepend start point if not already close
-        first_coord = best_segment[0]
-        if abs(first_coord[1] - start_lat) > 0.0005 or abs(first_coord[0] - start_lon) > 0.0005:
+        best_segment = list(best_segment)
+
+        # The slice was taken as full_coords[min:max]; if that runs end->start
+        # (the shape is stored in the opposite travel direction), flip it so the
+        # line actually goes start -> end. Without this, pinning the endpoints
+        # below produces a huge zig-zag back and forth.
+        def _sq(p, lat, lon):
+            dlat = p[1] - lat
+            dlng = (p[0] - lon) * lng_scale
+            return dlat * dlat + dlng * dlng
+
+        if _sq(best_segment[0], start_lat, start_lon) > _sq(
+            best_segment[0], end_lat, end_lon
+        ):
+            best_segment.reverse()
+
+        # Pin the exact stop coordinates as the endpoints so legs join cleanly.
+        if abs(best_segment[0][1] - start_lat) > 0.0005 or abs(
+            best_segment[0][0] - start_lon
+        ) > 0.0005:
             best_segment.insert(0, [start_lon, start_lat])
-        
-        # Append end point if not already close
-        last_coord = best_segment[-1]
-        if abs(last_coord[1] - end_lat) > 0.0005 or abs(last_coord[0] - end_lon) > 0.0005:
+        if abs(best_segment[-1][1] - end_lat) > 0.0005 or abs(
+            best_segment[-1][0] - end_lon
+        ) > 0.0005:
             best_segment.append([end_lon, end_lat])
-        
+
         return {
             "type": "LineString",
             "coordinates": best_segment
