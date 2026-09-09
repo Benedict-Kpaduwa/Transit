@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { stationApi, ctrainApi, busStopApi, vehiclesApi, tripPlannerApi, type Vehicle, type GeocodingResult, type TripPlan, type NearbyStop } from "@/services/api";
+import { stationApi, ctrainApi, busStopApi, vehiclesApi, tripPlannerApi, type Vehicle, type GeocodingResult, type TripPlan, type NearbyStop, type SimpleDirections } from "@/services/api";
 
 export const useAllStations = () => {
   const { data, isLoading, error, refetch, isError } = useQuery({
@@ -236,8 +236,34 @@ export const usePlanTrip = (
   });
 };
 
+/**
+ * Point-to-point directions for the Drive / Walk tabs.
+ * `enabled` lets callers hold off until the tab is actually shown.
+ */
+export const useSimpleDirections = (
+  origin: { lng: number; lat: number } | null,
+  destination: { lng: number; lat: number } | null,
+  mode: "driving" | "walking",
+  enabled = true
+) => {
+  return useQuery<SimpleDirections>({
+    queryKey: [
+      "simple-directions",
+      mode,
+      origin?.lng,
+      origin?.lat,
+      destination?.lng,
+      destination?.lat,
+    ],
+    queryFn: () => tripPlannerApi.simpleDirections(origin!, destination!, mode),
+    enabled: enabled && !!origin && !!destination,
+    staleTime: 1000 * 60 * 2,
+    gcTime: 1000 * 60 * 5,
+  });
+};
+
 // Re-export types for convenience
-export type { GeocodingResult, TripPlan, NearbyStop };
+export type { GeocodingResult, TripPlan, NearbyStop, SimpleDirections };
 
 // ==================== Mutation Hooks ====================
 

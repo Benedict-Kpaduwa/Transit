@@ -115,6 +115,350 @@ async def plan_trip_with_transit_api(
         return None
 
 
+def _fmt_duration(seconds: float) -> str:
+    """Format a duration in seconds as e.g. '1h 33min' or '12 min'."""
+    total_mins = max(0, round(seconds / 60))
+    if total_mins >= 60:
+        hours, mins = divmod(total_mins, 60)
+        return f"{hours}h {mins}min" if mins else f"{hours}h"
+    return f"{total_mins} min"
+
+
+def _fmt_distance(meters: float) -> str:
+    """Format a distance in metres as e.g. '650 m' or '1.2 km'."""
+    if meters >= 1000:
+        return f"{meters / 1000:.1f} km"
+    return f"{int(round(meters))} m"
+
+
+def _clean_fare(fare: Optional[Dict]) -> str:
+    """Pull a plain fare string out of a Transit API fare object."""
+    if not fare:
+        return ""
+    text = (fare.get("low_price", {}) or {}).get("text", "") or ""
+    # Transit API separates symbol and value with exotic spaces (U+202F / U+00A0)
+    for ch in ("\u202f", "\xa0", "\u2009", "\u2007"):
+        text = text.replace(ch, " ")
+    return text.strip()
+
+
+def _vehicle_meta(route_short_name: str, route_long_name: str, route_color: str) -> Tuple[str, Optional[str], str]:
+    """Return (vehicle_type, line, color) for a transit route."""
+    name = (route_short_name or "").lower()
+    long_lower = (route_long_name or "").lower()
+    if route_short_name in ("201", "Red") or "red line" in long_lower:
+        return "CTrain", "Red Line", "#DC143C"
+    if route_short_name in ("202", "Blue") or "blue line" in long_lower:
+        return "CTrain", "Blue Line", "#0088FF"
+    if name in ("red", "blue"):
+        return "CTrain", f"{route_short_name.capitalize()} Line", ("#DC143C" if name == "red" else "#0088FF")
+    color = f"#{route_color}" if route_color else "#22c55e"
+    return "Bus", None, color
+
+
+def _polyline_length_m(coords: List[List[float]]) -> float:
+    """Total ground length of a [lon, lat] polyline, in metres."""
+    return sum(
+        haversine_distance(coords[i][1], coords[i][0], coords[i + 1][1], coords[i + 1][0])
+        for i in range(len(coords) - 1)
+    )
+
+
+def _shape_within_detour(
+    coords: List[List[float]],
+    from_coords: List[float],
+    to_coords: List[float],
+    factor: float,
+    slack_m: float,
+) -> bool:
+    """
+    A sliced route shape is only trustworthy if it runs roughly stop-to-stop.
+    GTFS shape slicing on Calgary's many loop routes frequently returns most of
+    the loop; reject anything that rides far further than the crow-flies gap.
+    """
+    if len(coords) < 2:
+        return False
+    straight = haversine_distance(
+        from_coords[1], from_coords[0], to_coords[1], to_coords[0]
+    )
+    return _polyline_length_m(coords) <= max(straight * factor, straight + slack_m)
+
+
+async def _build_transit_geometry(
+    vehicle_type: str,
+    route_short_name: str,
+    line: Optional[str],
+    from_coords: List[float],
+    to_coords: List[float],
+) -> Dict:
+    """
+    Build a road/rail-following LineString for a transit leg between two real
+    stop coordinates:
+
+    * CTrain  -> GTFS rail shape (201/202), else the cached track alignment.
+    * Bus     -> GTFS route shape sliced to the ridden span *if it passes a
+                 detour sanity check*, otherwise Mapbox driving between the two
+                 stops (always road-following and sane), then a straight line.
+
+    Endpoints are pinned so consecutive legs join seamlessly.
+    """
+    start_lon, start_lat = from_coords
+    end_lon, end_lat = to_coords
+    have_coords = None not in (start_lat, start_lon, end_lat, end_lon)
+    geometry: Optional[Dict] = None
+
+    shape_lookup = route_short_name
+    if vehicle_type == "CTrain" and line:
+        shape_lookup = "201" if "Red" in line else "202"
+
+    if shape_lookup and have_coords:
+        try:
+            gtfs_shape = get_route_shape_segment(
+                shape_lookup, start_lat, start_lon, end_lat, end_lon
+            )
+            coords = (gtfs_shape or {}).get("coordinates", [])
+            # CTrain shapes track a straight-ish alignment; buses need a stricter
+            # guard because loop-route slices balloon to 4-5x the direct gap.
+            factor = 3.0 if vehicle_type == "CTrain" else 1.9
+            if coords and _shape_within_detour(
+                coords, from_coords, to_coords, factor, 500
+            ):
+                geometry = gtfs_shape
+        except Exception as e:
+            print(f"⚠️ GTFS shape lookup failed for {shape_lookup}: {e}")
+
+    if geometry is None and vehicle_type == "CTrain" and line and have_coords:
+        rail = get_ctrain_track_geometry(
+            (start_lon, start_lat), (end_lon, end_lat), line
+        )
+        if rail and len(rail.get("coordinates", [])) >= 2:
+            geometry = rail
+
+    if geometry is None and vehicle_type != "CTrain" and have_coords:
+        driving = await get_driving_directions(
+            (start_lon, start_lat), (end_lon, end_lat)
+        )
+        if driving and driving.get("geometry", {}).get("coordinates"):
+            geometry = driving["geometry"]
+
+    if geometry is None:
+        geometry = {
+            "type": "LineString",
+            "coordinates": [list(from_coords), list(to_coords)],
+        }
+
+    coords = geometry.get("coordinates") or []
+    if len(coords) >= 2:
+        coords[0] = list(from_coords)
+        coords[-1] = list(to_coords)
+        geometry["coordinates"] = coords
+    return geometry
+
+
+def _build_mode_chips(segments: List[Dict]) -> List[Dict]:
+    """Compact per-leg summary for the route list UI (walk 9 › 46 › 115 …)."""
+    chips = []
+    for seg in segments:
+        minutes = max(1, round(seg.get("duration", 0) / 60))
+        if seg["type"] == "walk":
+            chips.append({"type": "walk", "minutes": minutes})
+        else:
+            is_train = seg.get("vehicle_type") == "CTrain"
+            chips.append(
+                {
+                    "type": "train" if is_train else "bus",
+                    "label": seg.get("route_short_name") or seg.get("line") or "?",
+                    "color": seg.get("color"),
+                    "minutes": minutes,
+                }
+            )
+    return chips
+
+
+async def _transform_result(
+    result: Dict,
+    origin_lat: float,
+    origin_lng: float,
+    dest_lat: float,
+    dest_lng: float,
+    index: int,
+) -> Optional[Dict]:
+    """Transform a single Transit API itinerary into our internal route shape."""
+    segments: List[Dict] = []
+    total_walking_distance = 0.0
+    transit_lines: List[str] = []
+
+    raw_legs = result.get("legs", [])
+
+    # Pass 1: decode every leg's polyline. Only walk legs carry one; transit legs
+    # never do, and the Transit API's stop ids don't map to our GTFS ids — so the
+    # real boarding/alighting points come from the walk legs that bracket a ride.
+    decoded: List[List[List[float]]] = []
+    for leg in raw_legs:
+        coords: List[List[float]] = []
+        if leg.get("polyline"):
+            try:
+                import polyline
+
+                coords = [[lon, lat] for lat, lon in polyline.decode(leg["polyline"])]
+            except Exception:
+                coords = []
+        decoded.append(coords)
+
+    def _walk_end_before(i: int) -> Optional[List[float]]:
+        for j in range(i - 1, -1, -1):
+            if raw_legs[j].get("leg_mode", "").lower() == "walk" and decoded[j]:
+                return decoded[j][-1]
+        return None
+
+    def _walk_start_after(i: int) -> Optional[List[float]]:
+        for j in range(i + 1, len(raw_legs)):
+            if raw_legs[j].get("leg_mode", "").lower() == "walk" and decoded[j]:
+                return decoded[j][0]
+        return None
+
+    last_coords = [origin_lng, origin_lat]
+
+    for leg_index, leg in enumerate(raw_legs):
+        leg_mode = leg.get("leg_mode", "").lower()
+        leg_coords = decoded[leg_index]
+
+        if leg_mode == "walk":
+            distance = leg.get("distance", 0) or 0
+            total_walking_distance += distance
+            from_coords = leg_coords[0] if leg_coords else last_coords
+            to_coords = leg_coords[-1] if leg_coords else [dest_lng, dest_lat]
+            walk_geometry = (
+                {"type": "LineString", "coordinates": leg_coords}
+                if len(leg_coords) > 1
+                else {"type": "LineString", "coordinates": [from_coords, to_coords]}
+            )
+            segments.append(
+                {
+                    "type": "walk",
+                    "instruction": "Walk",
+                    "from": {
+                        "name": "Start" if leg_index == 0 else "Transfer",
+                        "coordinates": from_coords,
+                    },
+                    "to": {"name": "Stop", "coordinates": to_coords},
+                    "distance": int(distance),
+                    "duration": leg.get("duration", 0),
+                    "departure_time": leg.get("start_time"),
+                    "arrival_time": leg.get("end_time"),
+                    "geometry": walk_geometry,
+                }
+            )
+            last_coords = to_coords
+            continue
+
+        if leg_mode != "transit":
+            continue
+
+        route_info = (leg.get("routes") or [{}])[0]
+        route_short_name = route_info.get("route_short_name", "?")
+        route_long_name = route_info.get("route_long_name", "") or ""
+        headsign = route_info.get("headsign") or (
+            route_long_name.split("/")[0].strip() if route_long_name else ""
+        )
+        vehicle_type, line, color = _vehicle_meta(
+            route_short_name, route_long_name, route_info.get("route_color", "")
+        )
+        transit_lines.append(route_short_name)
+
+        departure = (leg.get("departures") or [{}])[0]
+        plan_details = departure.get("plan_details", {})
+        route_id = plan_details.get("global_route_id", "")
+        stop_items = plan_details.get("stop_schedule_items", []) or []
+
+        from_coords = _walk_end_before(leg_index) or last_coords
+        to_coords = _walk_start_after(leg_index) or [dest_lng, dest_lat]
+
+        geometry = await _build_transit_geometry(
+            vehicle_type, route_short_name, line, from_coords, to_coords
+        )
+
+        if vehicle_type == "CTrain":
+            instruction = f"Take {route_short_name} Line towards {headsign}" if headsign else f"Take {route_short_name} Line"
+        else:
+            instruction = f"Take Route {route_short_name} towards {headsign}" if headsign else f"Take Route {route_short_name}"
+
+        num_stops = max(1, len(stop_items) - 1) if stop_items else max(1, round(leg.get("duration", 0) / 150))
+        segments.append(
+            {
+                "type": "transit",
+                "instruction": instruction,
+                "vehicle_type": vehicle_type,
+                "route_id": route_id,
+                "route_short_name": route_short_name,
+                "route_long_name": route_long_name,
+                "line": line,
+                "headsign": headsign,
+                "color": color,
+                "from": {
+                    "name": "Departure stop",
+                    "stop_id": stop_items[0].get("global_stop_id") if stop_items else None,
+                    "coordinates": from_coords,
+                },
+                "to": {
+                    "name": "Arrival stop",
+                    "stop_id": stop_items[-1].get("global_stop_id") if len(stop_items) > 1 else None,
+                    "coordinates": to_coords,
+                },
+                "num_stops": num_stops,
+                "stops_count": num_stops,
+                "stops": [],
+                "duration": leg.get("duration", 0),
+                "departure_time": leg.get("start_time") or departure.get("departure_time"),
+                "arrival_time": leg.get("end_time") or departure.get("arrival_time"),
+                "geometry": geometry,
+            }
+        )
+        last_coords = to_coords
+
+    if not any(s["type"] == "transit" for s in segments):
+        return None
+
+    # Snap walk legs onto the transit stops on either side so nothing jumps.
+    for i, seg in enumerate(segments):
+        if seg["type"] != "walk":
+            continue
+        if i > 0:
+            anchor = segments[i - 1]["to"]["coordinates"]
+            seg["from"]["coordinates"] = anchor
+            if seg["geometry"]["coordinates"]:
+                seg["geometry"]["coordinates"][0] = anchor
+        if i < len(segments) - 1:
+            anchor = segments[i + 1]["from"]["coordinates"]
+            seg["to"]["coordinates"] = anchor
+            if seg["geometry"]["coordinates"]:
+                seg["geometry"]["coordinates"][-1] = anchor
+
+    total_duration = result.get("duration", 0) or sum(s.get("duration", 0) for s in segments)
+    transit_segments = [s for s in segments if s["type"] == "transit"]
+    depart_at = segments[0].get("departure_time") if segments else result.get("start_time")
+    arrive_at = segments[-1].get("arrival_time") if segments else result.get("end_time")
+
+    return {
+        "id": f"transit-{index}",
+        "segments": segments,
+        "mode_chips": _build_mode_chips(segments),
+        "summary": {
+            "total_duration": total_duration,
+            "total_duration_text": _fmt_duration(total_duration),
+            "total_walking_distance": int(total_walking_distance),
+            "total_walking_distance_text": _fmt_distance(total_walking_distance),
+            "transit_line": ", ".join(transit_lines) if transit_lines else "N/A",
+            "transit_type": transit_segments[0].get("vehicle_type") if transit_segments else "Transit",
+            "num_transfers": max(0, len(transit_segments) - 1),
+            "fare": _clean_fare(result.get("fare")),
+            "depart_at": depart_at,
+            "arrive_at": arrive_at,
+            "accessibility": result.get("accessibility"),
+        },
+    }
+
+
 async def transform_transit_api_response(
     api_response: Dict,
     origin_lat: float,
@@ -122,403 +466,44 @@ async def transform_transit_api_response(
     dest_lat: float,
     dest_lng: float,
 ) -> Dict:
-    """Transform Transit API v3 response to our internal format"""
-    
-    # Transit API v3 uses 'results' array instead of 'plan.itineraries'
+    """Transform a Transit API v3 /plan response into our multi-route format."""
     results = api_response.get("results", [])
-    
     if not results:
         return {
             "success": False,
             "error": "No routes found",
             "suggestion": "Try adjusting your departure time or location",
         }
-    
-    # Use the first (best) result
-    result = results[0]
-    
-    segments = []
-    total_walking_distance = 0
-    transit_lines = []
-    
-    # Track coordinates for building the route
-    last_coords = [origin_lng, origin_lat]
-    
-    for leg_index, leg in enumerate(result.get("legs", [])):
-        leg_mode = leg.get("leg_mode", "").lower()
-        
-        # Decode polyline to get actual coordinates for this leg
-        leg_coords = []
-        if leg.get("polyline"):
-            try:
-                import polyline
-                decoded = polyline.decode(leg.get("polyline"))
-                leg_coords = [[lon, lat] for lat, lon in decoded]
-            except Exception:
-                pass
-        
-        if leg_mode == "walk":
-            distance = leg.get("distance", 0)
-            total_walking_distance += distance
-            
-            # Use polyline endpoints if available, otherwise use last known coords
-            from_coords = leg_coords[0] if leg_coords else last_coords
-            to_coords = leg_coords[-1] if leg_coords else [dest_lng, dest_lat]
-            
-            # Get walking geometry - Priority: Google Walking Directions, then Transit API
-            walk_geometry = None
-            
-            # Priority 1: Google Walking Directions
-            if from_coords and to_coords:
-                try:
-                    google_walk = await get_google_walking_directions(
-                        from_coords[1], from_coords[0],  # lat, lon
-                        to_coords[1], to_coords[0]
-                    )
-                    if google_walk and google_walk.get("geometry"):
-                        walk_geometry = google_walk["geometry"]
-                        print(f"✅ Google walking geometry: {len(walk_geometry.get('coordinates', []))} pts")
-                except Exception as e:
-                    print(f"⚠️ Google Walking failed: {e}")
-            
-            # Priority 2: Transit API polyline (fallback)
-            if not walk_geometry and leg_coords and len(leg_coords) > 1:
-                walk_geometry = {"type": "LineString", "coordinates": leg_coords}
-                print(f"✅ Transit API walking polyline: {len(leg_coords)} pts")
-            
-            # Priority 3: Straight line (last resort)
-            if not walk_geometry and from_coords and to_coords:
-                walk_geometry = {"type": "LineString", "coordinates": [from_coords, to_coords]}
-            
-            segments.append({
-                "type": "walk",
-                "instruction": "Walk",
-                "from": {
-                    "name": "Origin" if leg_index == 0 else "Transfer",
-                    "coordinates": from_coords,
-                },
-                "to": {
-                    "name": "Stop",
-                    "coordinates": to_coords,
-                },
-                "distance": int(distance),
-                "duration": leg.get("duration", 0),
-                "geometry": walk_geometry,
-            })
-            
-            # Update last known coordinates
-            if to_coords:
-                last_coords = to_coords
-                    
-        elif leg_mode == "transit":
-            # Get route info from the routes field
-            leg_routes = leg.get("routes", [])
-            route_info = leg_routes[0] if leg_routes else {}
-            
-            # Get actual route details
-            route_short_name = route_info.get("route_short_name", "?")
-            route_long_name = route_info.get("route_long_name", "")
-            headsign = route_info.get("headsign", route_long_name.split("/")[0].strip() if route_long_name else "")
-            route_color = route_info.get("route_color", "")
-            
-            transit_lines.append(route_short_name)
-            
-            # Get departure info and stop schedule
-            departures = leg.get("departures", [])
-            if departures:
-                departure = departures[0]
-                plan_details = departure.get("plan_details", {})
-                route_id = plan_details.get("global_route_id", "")
-                
-                # Get stop schedule items for intermediate stops
-                stop_items = plan_details.get("stop_schedule_items", [])
-                
-                # Determine vehicle type based on route name
-                vehicle_type = "Bus"
-                color = f"#{route_color}" if route_color else "#22c55e"
-                line = None
-                
-                # Detect CTrain by route number (201=Red, 202=Blue) or route name
-                route_name_lower = route_short_name.lower()
-                route_long_lower = route_long_name.lower() if route_long_name else ""
-                
-                if route_short_name in ["201", "Red"] or "red line" in route_long_lower:
-                    vehicle_type = "CTrain"
-                    line = "Red Line"
-                    color = "#DC143C"
-                elif route_short_name in ["202", "Blue"] or "blue line" in route_long_lower:
-                    vehicle_type = "CTrain"
-                    line = "Blue Line"
-                    color = "#0088FF"
-                elif route_name_lower in ["red", "blue"]:
-                    vehicle_type = "CTrain"
-                    line = f"{route_short_name.capitalize()} Line"
-                    color = "#DC143C" if route_name_lower == "red" else "#0088FF"
-                
-                # Use polyline endpoints for transit coordinates
-                from_coords = leg_coords[0] if leg_coords else last_coords
-                to_coords = leg_coords[-1] if leg_coords else [dest_lng, dest_lat]
-                
-                # Get stop IDs and coordinates from stop_items
-                departure_stop_id = None
-                arrival_stop_id = None
-                departure_stop_coords = None
-                arrival_stop_coords = None
-                
-                if stop_items:
-                    # First stop (departure)
-                    first_stop = stop_items[0]
-                    departure_stop_id = first_stop.get("global_stop_id", "")
-                    if "stop" in first_stop:
-                        stop_data = first_stop["stop"]
-                        if "rt_lat" in stop_data and "rt_lon" in stop_data:
-                            departure_stop_coords = [stop_data["rt_lon"], stop_data["rt_lat"]]
-                    
-                    # Last stop (arrival)
-                    if len(stop_items) > 1:
-                        last_stop = stop_items[-1]
-                        arrival_stop_id = last_stop.get("global_stop_id", "")
-                        if "stop" in last_stop:
-                            stop_data = last_stop["stop"]
-                            if "rt_lat" in stop_data and "rt_lon" in stop_data:
-                                arrival_stop_coords = [stop_data["rt_lon"], stop_data["rt_lat"]]
-                
-                # For CTrain, use actual stop coordinates if available (more accurate for track geometry)
-                if vehicle_type == "CTrain":
-                    if departure_stop_coords:
-                        from_coords = departure_stop_coords
-                        print(f"   🚉 Using departure stop coords: {from_coords}")
-                    if arrival_stop_coords:
-                        to_coords = arrival_stop_coords
-                        print(f"   🚉 Using arrival stop coords: {to_coords}")
-                # Get accurate route geometry
-                transit_geometry = None
-                
-                # Get coordinates for geometry lookup
-                start_lat = from_coords[1] if from_coords else None
-                start_lon = from_coords[0] if from_coords else None
-                end_lat = to_coords[1] if to_coords else None
-                end_lon = to_coords[0] if to_coords else None
-                
-                # PRIORITY ORDER:
-                # CTrain: Google Transit API (for accurate headsigns)
-                # Bus: Google Driving API (to follow roads accurately)
-                # Fallbacks: Transit API polyline, then GTFS shapes
-                
-                google_headsign = None
-                
-                if vehicle_type == "CTrain":
-                    # CTrain: Use Google Transit for geometry and headsign
-                    if start_lat and start_lon and end_lat and end_lon:
-                        try:
-                            google_result = await get_google_transit_segment_geometry(
-                                start_lat, start_lon, end_lat, end_lon
-                            )
-                            if google_result and google_result.get("geometry"):
-                                transit_geometry = google_result["geometry"]
-                                google_headsign = google_result.get("transit_headsign")
-                                coords = transit_geometry.get('coordinates', [])
-                                print(f"✅ Google transit geometry for {route_short_name}: {len(coords)} pts")
-                                if google_headsign:
-                                    print(f"   🎯 Google headsign: {google_headsign}")
-                        except Exception as e:
-                            print(f"⚠️ Google Transit failed: {e}")
-                else:
-                    # Bus: Use Google Driving for road-accurate geometry
-                    if start_lat and start_lon and end_lat and end_lon:
-                        try:
-                            driving_result = await get_google_driving_directions(
-                                start_lat, start_lon, end_lat, end_lon
-                            )
-                            if driving_result and driving_result.get("geometry"):
-                                transit_geometry = driving_result["geometry"]
-                                coords = transit_geometry.get('coordinates', [])
-                                print(f"✅ Google driving geometry for bus {route_short_name}: {len(coords)} pts")
-                        except Exception as e:
-                            print(f"⚠️ Google Driving failed: {e}")
-                    
-                    # Also get headsign from Google Transit
-                    if start_lat and start_lon and end_lat and end_lon and not google_headsign:
-                        try:
-                            google_result = await get_google_transit_segment_geometry(
-                                start_lat, start_lon, end_lat, end_lon
-                            )
-                            if google_result:
-                                google_headsign = google_result.get("transit_headsign")
-                        except Exception:
-                            pass
-                
-                # Priority 2: Transit API polyline (fallback)
-                if not transit_geometry and leg_coords and len(leg_coords) > 2:
-                    transit_geometry = {"type": "LineString", "coordinates": leg_coords}
-                    print(f"✅ Transit API polyline for {route_short_name}: {len(leg_coords)} pts")
-                
-                # Priority 3: GTFS shapes (last resort)
-                if not transit_geometry and route_short_name and start_lat and start_lon and end_lat and end_lon:
-                    gtfs_shape = get_route_shape_segment(
-                        route_short_name, start_lat, start_lon, end_lat, end_lon
-                    )
-                    if gtfs_shape:
-                        transit_geometry = gtfs_shape
-                        print(f"✅ GTFS shape for {route_short_name}: {len(gtfs_shape.get('coordinates', []))} pts")
-                
-                # Last resort: Straight line
-                if not transit_geometry and from_coords and to_coords:
-                    transit_geometry = {
-                        "type": "LineString",
-                        "coordinates": [from_coords, to_coords]
-                    }
-                
-                # CRITICAL: Ensure geometry endpoints match segment from/to coordinates
-                # This fixes disconnected lines on the map
-                if transit_geometry and transit_geometry.get("coordinates") and from_coords and to_coords:
-                    coords = transit_geometry["coordinates"]
-                    if len(coords) >= 2:
-                        # Set first point to from_coords (departure stop)
-                        coords[0] = from_coords
-                        # Set last point to to_coords (arrival stop)
-                        coords[-1] = to_coords
-                
-                # Use Google's headsign if available (more accurate than Transit API)
-                final_headsign = google_headsign if google_headsign else headsign
-                
-                # Build instruction with route details
-                if vehicle_type == "CTrain":
-                    instruction = f"Take {route_short_name} Line towards {final_headsign}"
-                else:
-                    instruction = f"Take Route {route_short_name} towards {final_headsign}" if final_headsign else f"Take Route {route_short_name}"
-                
-                segments.append({
-                    "type": "transit",
-                    "instruction": instruction,
-                    "vehicle_type": vehicle_type,
-                    "route_id": route_id,
-                    "route_short_name": route_short_name,
-                    "route_long_name": route_long_name,
-                    "line": line,
-                    "headsign": final_headsign,
-                    "color": color,
-                    "from": {
-                        "name": "Departure stop",
-                        "stop_id": departure_stop_id,
-                        "coordinates": from_coords,
-                    },
-                    "to": {
-                        "name": "Arrival stop",
-                        "stop_id": arrival_stop_id,
-                        "coordinates": to_coords,
-                    },
-                    "num_stops": len(stop_items),
-                    "stops_count": len(stop_items),
-                    "duration": leg.get("duration", 0),
-                    "departure_time": departure.get("departure_time"),
-                    "arrival_time": departure.get("arrival_time"),
-                    "geometry": transit_geometry,
-                })
-                
-                # Update last known coordinates
-                if leg_coords:
-                    last_coords = leg_coords[-1]
-                elif to_coords:
-                    last_coords = to_coords
 
-    # Merge consecutive transit segments with the same route
-    merged_segments = []
-    for segment in segments:
-        if (
-            merged_segments
-            and segment["type"] == "transit"
-            and merged_segments[-1]["type"] == "transit"
-            and segment.get("route_short_name") == merged_segments[-1].get("route_short_name")
-            and segment.get("headsign") == merged_segments[-1].get("headsign")
-        ):
-            # Merge with previous segment
-            prev = merged_segments[-1]
-            prev["to"] = segment["to"]
-            prev["num_stops"] = prev.get("num_stops", 0) + segment.get("num_stops", 0)
-            prev["stops_count"] = prev.get("stops_count", 0) + segment.get("stops_count", 0)
-            prev["duration"] = prev.get("duration", 0) + segment.get("duration", 0)
-            prev["arrival_time"] = segment.get("arrival_time")
-            # Merge geometry if both have it
-            if segment.get("geometry") and prev.get("geometry"):
-                prev_coords = prev["geometry"].get("coordinates", [])
-                new_coords = segment["geometry"].get("coordinates", [])
-                prev["geometry"]["coordinates"] = prev_coords + new_coords
-        else:
-            merged_segments.append(segment)
-    
-    segments = merged_segments
-    
-    # CRITICAL: Fix segment connectivity - ensure walking segments connect to transit stops
-    # Only modify WALKING segments to connect to adjacent transit segments
-    # Transit segments should keep their original station coordinates
-    for i in range(1, len(segments)):
-        prev_segment = segments[i - 1]
-        curr_segment = segments[i]
-        
-        # Only modify walking segments to connect to adjacent segments
-        if curr_segment.get("type") == "walk":
-            # Get the end point of the previous segment
-            prev_end = prev_segment.get("to", {}).get("coordinates")
-            
-            if prev_end:
-                # Update the walking segment's start to match the previous segment's end
-                curr_segment["from"]["coordinates"] = prev_end
-                
-                # Also update the geometry's first point
-                if curr_segment.get("geometry") and curr_segment["geometry"].get("coordinates"):
-                    curr_geom_coords = curr_segment["geometry"]["coordinates"]
-                    if len(curr_geom_coords) > 0:
-                        curr_geom_coords[0] = prev_end
+    routes: List[Dict] = []
+    for index, result in enumerate(results[:4]):
+        try:
+            route = await _transform_result(
+                result, origin_lat, origin_lng, dest_lat, dest_lng, index
+            )
+        except Exception as e:
+            print(f"⚠️ Failed to transform itinerary {index}: {e}")
+            route = None
+        if route:
+            routes.append(route)
 
-    # Calculate total duration
-    total_duration = result.get("duration", 0)
-    
-    # Format duration text
-    if total_duration >= 3600:
-        hours = total_duration // 3600
-        mins = (total_duration % 3600) // 60
-        duration_text = f"{hours}h {mins}min" if mins else f"{hours}h"
-    else:
-        duration_text = f"{total_duration // 60} min"
-    
-    # Format walking distance text
-    if total_walking_distance >= 1000:
-        walking_text = f"{total_walking_distance / 1000:.1f} km"
-    else:
-        walking_text = f"{int(total_walking_distance)} m"
-    
-    # Get fare info
-    fare = result.get("fare", {})
-    fare_text = fare.get("low_price", {}).get("text", "")
-    
+    if not routes:
+        return {
+            "success": False,
+            "error": "No usable transit route found",
+            "suggestion": "Try adjusting your departure time or location",
+        }
+
+    primary = routes[0]
     return {
         "success": True,
         "source": "transit_api",
-        "origin": {
-            "coordinates": [origin_lng, origin_lat],
-        },
-        "destination": {
-            "coordinates": [dest_lng, dest_lat],
-        },
-        "segments": segments,
-        "summary": {
-            "total_duration": total_duration,
-            "total_duration_text": duration_text,
-            "total_walking_distance": int(total_walking_distance),
-            "total_walking_distance_text": walking_text,
-            "transit_line": ", ".join(transit_lines) if transit_lines else "N/A",
-            "transit_type": next((s.get("vehicle_type") for s in segments if s["type"] == "transit"), "Transit"),
-            "num_transfers": max(0, len([s for s in segments if s["type"] == "transit"]) - 1),
-            "fare": fare_text,
-        },
-        "alternative_routes": [
-            {
-                "duration": r.get("duration"),
-                "accessibility": r.get("accessibility"),
-            }
-            for r in results[1:4]
-        ],
+        "origin": {"coordinates": [origin_lng, origin_lat]},
+        "destination": {"coordinates": [dest_lng, dest_lat]},
+        "routes": routes,
+        # Back-compat: callers that expect a single plan read these.
+        "segments": primary["segments"],
+        "summary": primary["summary"],
     }
 
 
@@ -941,7 +926,46 @@ def get_intermediate_stops(
     return stops
 
 
+def _ensure_multi_route_shape(result: Dict) -> Dict:
+    """
+    Guarantee a successful trip plan carries a `routes` array so every caller
+    (and the frontend) can treat single- and multi-route responses the same way.
+    The GTFS fallback only ever produces one itinerary.
+    """
+    if not result or not result.get("success"):
+        return result
+    if result.get("routes"):
+        return result
+
+    segments = result.get("segments", []) or []
+    summary = result.get("summary", {}) or {}
+    result["routes"] = [
+        {
+            "id": "gtfs-0",
+            "segments": segments,
+            "mode_chips": _build_mode_chips(segments),
+            "summary": summary,
+        }
+    ]
+    return result
+
+
 async def plan_trip(
+    origin: Tuple[float, float],
+    destination: Tuple[float, float],
+    prefer_lrt: bool = True,
+    leave_time: Optional[int] = None,
+    arrive_by: Optional[int] = None,
+    accessibility: str = "none",
+) -> Dict:
+    """Plan a transit trip, always returning a `routes` array on success."""
+    result = await _plan_trip_impl(
+        origin, destination, prefer_lrt, leave_time, arrive_by, accessibility
+    )
+    return _ensure_multi_route_shape(result)
+
+
+async def _plan_trip_impl(
     origin: Tuple[float, float],
     destination: Tuple[float, float],
     prefer_lrt: bool = True,

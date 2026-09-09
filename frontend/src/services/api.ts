@@ -303,6 +303,12 @@ export interface TripSegment {
     distance: number;
     duration: number;
   }>;
+  stops?: Array<{
+    name?: string;
+    coordinates: [number, number];
+    arrival_time?: number;
+    departure_time?: number;
+  }>;
   line?: string;
   vehicle_type?: string;
   color?: string;
@@ -326,18 +332,41 @@ export interface TripSegment {
   };
 }
 
+export interface TripRouteSummary {
+  total_duration: number;
+  total_duration_text: string;
+  total_walking_distance: number;
+  total_walking_distance_text: string;
+  transit_line: string;
+  transit_type: string;
+  num_transfers?: number;
+  fare?: string;
+  depart_at?: number;
+  arrive_at?: number;
+  accessibility?: string;
+}
+
+export interface ModeChip {
+  type: "walk" | "bus" | "train";
+  label?: string;
+  color?: string;
+  minutes?: number;
+}
+
+export interface TripRoute {
+  id: string;
+  segments: TripSegment[];
+  mode_chips: ModeChip[];
+  summary: TripRouteSummary;
+}
+
 export interface TripPlan {
   success: boolean;
+  source?: string;
   error?: string;
   suggestion?: string;
-  summary?: {
-    total_duration: number;
-    total_duration_text: string;
-    total_walking_distance: number;
-    total_walking_distance_text: string;
-    transit_line: string;
-    transit_type: string;
-  };
+  summary?: TripRouteSummary;
+  routes?: TripRoute[];
   origin?: {
     coordinates: [number, number];
   };
@@ -347,6 +376,18 @@ export interface TripPlan {
   segments?: TripSegment[];
   origin_stops?: NearbyStop[];
   destination_stops?: NearbyStop[];
+}
+
+export interface SimpleDirections {
+  success: boolean;
+  mode?: "driving" | "walking";
+  error?: string;
+  distance?: number;
+  duration?: number;
+  geometry?: {
+    type: string;
+    coordinates: [number, number][];
+  };
 }
 
 export const tripPlannerApi = {
@@ -428,6 +469,31 @@ export const tripPlannerApi = {
         success: false,
         error: "Failed to plan trip. Please try again.",
       };
+    }
+  },
+
+  /**
+   * Point-to-point directions for the Drive / Walk tabs of the trip planner
+   */
+  simpleDirections: async (
+    origin: { lng: number; lat: number },
+    destination: { lng: number; lat: number },
+    mode: "driving" | "walking"
+  ): Promise<SimpleDirections> => {
+    try {
+      const response = await api.get<SimpleDirections>("/directions/simple", {
+        params: {
+          origin_lng: origin.lng,
+          origin_lat: origin.lat,
+          dest_lng: destination.lng,
+          dest_lat: destination.lat,
+          mode,
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error("Directions error:", error);
+      return { success: false, error: "Failed to get directions." };
     }
   },
 };

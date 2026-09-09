@@ -36,6 +36,8 @@ from services.gtfs_service import (
 from services.trip_service import (
     find_nearby_stops,
     geocode_location,
+    get_driving_directions,
+    get_walking_directions,
     plan_trip,
 )
 from services.ctrain_interpolation import get_interpolated_ctrain_positions
@@ -328,6 +330,39 @@ async def trip_plan_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/directions/simple")
+async def directions_simple_endpoint(
+    origin_lng: float = Query(..., description="Origin longitude"),
+    origin_lat: float = Query(..., description="Origin latitude"),
+    dest_lng: float = Query(..., description="Destination longitude"),
+    dest_lat: float = Query(..., description="Destination latitude"),
+    mode: str = Query("driving", description="driving or walking"),
+):
+    """
+    Point-to-point directions for the Drive / Walk tabs of the trip planner.
+    Thin Mapbox Directions passthrough: returns duration, distance and a
+    road-following GeoJSON LineString.
+    """
+    try:
+        origin = (origin_lng, origin_lat)
+        destination = (dest_lng, dest_lat)
+        if mode == "walking":
+            result = await get_walking_directions(origin, destination)
+        else:
+            result = await get_driving_directions(origin, destination)
+
+        if not result:
+            return {"success": False, "error": "No route found"}
+
+        return {
+            "success": True,
+            "mode": mode,
+            "distance": result.get("distance_meters"),
+            "duration": result.get("duration_seconds"),
+            "geometry": result.get("geometry"),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/geocode")

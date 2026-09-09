@@ -4,6 +4,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import type { Station, RouteLine, CTrainPosition } from "@/types";
 import { useCTrainPositionsByLine, useBusStops, useBusPositions } from "@/hooks/queries";
 import TripPlanner from "./TripPlanner";
+import TripSheet from "./trip/trip-sheet";
 import { type TripPlan } from "@/services/api";
 import {
   Zap,
@@ -1182,10 +1183,14 @@ const Map = ({
           | LngLat[]
           | undefined;
 
+        // The backend now trims each transit leg to the boarding→alighting span
+        // and pins the exact stop coordinates as endpoints, so a multi-point
+        // shape can be drawn as-is — it already follows the road / rail.
+        const backendShapeUsable = !!backendShape && backendShape.length >= 3;
+
         if (segment.vehicle_type === "CTrain") {
-          // Prefer the real rail alignment we already have loaded. Only fall
-          // back to the backend shape if the track slice doesn't fit (e.g. an
-          // interlined downtown span), and to a straight line if neither does.
+          // Prefer the real rail alignment we already have loaded. Fall back to
+          // the backend shape, then a straight line.
           const viaTrack = getTrackSegment(
             fromCoords,
             toCoords,
@@ -1193,6 +1198,12 @@ const Map = ({
           );
           if (viaTrack.length > 2) {
             routeCoordinates = viaTrack;
+          } else if (backendShapeUsable) {
+            routeCoordinates = [
+              fromCoords,
+              ...(backendShape!.slice(1, -1) as [number, number][]),
+              toCoords,
+            ];
           } else {
             routeCoordinates = resolveLegGeometry(
               backendShape,
@@ -1200,19 +1211,22 @@ const Map = ({
               toCoords as LngLat
             ).coords as [number, number][];
           }
+        } else if (backendShapeUsable) {
+          // Use the backend's road-following shape directly.
+          routeCoordinates = [
+            fromCoords,
+            ...(backendShape!.slice(1, -1) as [number, number][]),
+            toCoords,
+          ];
         } else if (backendShape) {
-          // Trim the backend shape to the boarding→alighting span. If it
-          // doesn't pass near both stops, or the trimmed span balloons past a
-          // sane detour, `resolveLegGeometry` returns a clean straight line
-          // instead of a loop across the city.
           routeCoordinates = resolveLegGeometry(
             backendShape,
             fromCoords as LngLat,
             toCoords as LngLat
           ).coords as [number, number][];
         } else {
-          // No geometry (typical for bus legs) — fetch the route's GTFS
-          // shape in draw() instead of drawing a straight line across town
+          // No geometry at all — fetch the route's GTFS shape in draw() instead
+          // of drawing a straight line across town.
           routeCoordinates = null;
         }
 
@@ -1779,16 +1793,25 @@ const Map = ({
 
         {/* Nearby Arrivals moved to Sidebar */}
 
-        {/* Trip Planner - Google Maps style floating panel (all devices) */}
-        {mapLoaded && (
-          <TripPlanner
-            userLocation={userLocation}
-            onRouteCalculated={handleRouteCalculated}
-            onClearRoute={handleClearRoute}
-            externalDestination={externalDestination}
-            onClearExternalDestination={handleClearExternalDestination}
-          />
-        )}
+        {/* Trip planner — Google Maps style bottom sheet on mobile, floating panel on desktop */}
+        {mapLoaded &&
+          (isMobile ? (
+            <TripSheet
+              userLocation={userLocation}
+              onRouteCalculated={handleRouteCalculated}
+              onClearRoute={handleClearRoute}
+              externalDestination={externalDestination}
+              onClearExternalDestination={handleClearExternalDestination}
+            />
+          ) : (
+            <TripPlanner
+              userLocation={userLocation}
+              onRouteCalculated={handleRouteCalculated}
+              onClearRoute={handleClearRoute}
+              externalDestination={externalDestination}
+              onClearExternalDestination={handleClearExternalDestination}
+            />
+          ))}
 
         {/* Map Style Switcher - bottom left */}
         {mapLoaded && <MapStyles />}
