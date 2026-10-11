@@ -123,7 +123,7 @@ final class AppModel {
     func pollVehicles() async {
         while !Task.isCancelled {
             if let t = try? await api.ctrains() { ctrains = t }
-            if showBuses && mapIsZoomedIn, let b = try? await api.buses() { buses = b }
+            if showBuses, let b = try? await api.buses() { buses = b }
             try? await Task.sleep(for: .seconds(15))
         }
     }
@@ -150,7 +150,7 @@ final class AppModel {
 
     /// Centre on the user the first time a GPS fix arrives, unless they've already opened something.
     func locationUpdated() {
-        guard !centeredOnUser, path.isEmpty, location.location != nil else { return }
+        guard !centeredOnUser, path.isEmpty, location.location != nil else { return }  // only fixes LocationManager accepted as accurate/fresh
         centeredOnUser = true
         centerOnUser()
     }

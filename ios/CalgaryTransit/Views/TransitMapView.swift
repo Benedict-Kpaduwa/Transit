@@ -38,7 +38,7 @@ struct TransitMapView: View {
                 .annotationTitles(.hidden)
             }
 
-            if model.showBuses && model.mapIsZoomedIn {
+            if model.showBuses {
                 ForEach(model.buses) { bus in
                     Annotation(bus.routeShortName ?? "", coordinate: bus.coordinate, anchor: .center) {
                         BusMarker(route: bus.routeShortName, color: Color(hex: bus.color) ?? .busGrey)

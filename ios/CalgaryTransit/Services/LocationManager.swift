@@ -14,8 +14,8 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
         status = manager.authorizationStatus
         super.init()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        manager.distanceFilter = 50
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.distanceFilter = 10
     }
 
     func start() {
@@ -32,7 +32,11 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        location = locations.last
+        // Drop invalid, stale (cached) or very coarse fixes so we never centre on a wrong spot.
+        guard let fix = locations.last(where: {
+            $0.horizontalAccuracy > 0 && $0.horizontalAccuracy <= 200 && abs($0.timestamp.timeIntervalSinceNow) < 15
+        }) else { return }
+        location = fix
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}

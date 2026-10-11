@@ -88,7 +88,7 @@ struct NearbyList: View {
                     if on { Task { if let b = try? await model.api.buses() { model.buses = b } } }
                 }
             } footer: {
-                if model.showBuses && !model.mapIsZoomedIn { Text("Zoom in to see buses.") }
+                if model.showBuses { Text("\(model.buses.count) buses live across the city.") }
             }
 
             Section("Nearby departures") {
