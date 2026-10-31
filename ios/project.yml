@@ -29,7 +29,7 @@ targets:
           API_BASE_URL: http://192.168.1.128:8000
         Release:
           # Same host the web app is served from; nginx proxies /api -> FastAPI.
-          API_BASE_URL: https://YOUR-APP.ondigitalocean.app/api
+          API_BASE_URL: https://YOUR-DOMAIN/api
     info:
       path: CalgaryTransit/Info.plist
       properties:

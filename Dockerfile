@@ -54,7 +54,7 @@ RUN rm -f /etc/nginx/sites-enabled/default
 # Supervisor config
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Non-root user (DigitalOcean best practice)
+# Non-root user
 RUN useradd --create-home appuser \
     && chown -R appuser:appuser /app \
     && chown -R appuser:appuser /var/www/html \

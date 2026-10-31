@@ -14,9 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REGISTRY: registry.digitalocean.com
-  IMAGE_NAME: calgary-transit
-  APP_NAME: calgary-transit
+  ECR_REPOSITORY: calgary-transit
 
 jobs:
   ci:
@@ -60,22 +58,27 @@ jobs:
         run: python -m compileall -q backend -x 'venv|__pycache__'
 
   build-and-deploy:
-    name: Deploy to DigitalOcean
+    name: Deploy to AWS EC2
     needs: ci
     # Deploy only on pushes to master (and manual dispatches), never on PRs
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC to AWS
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Log in to DigitalOcean Container Registry
-        run: doctl registry login --expiry-seconds 1200
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -86,20 +89,34 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ secrets.REGISTRY_NAME }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ secrets.REGISTRY_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
           build-args: |
             VITE_MAPBOX_ACCESS_TOKEN=${{ secrets.VITE_MAPBOX_ACCESS_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy to App Platform
+      - name: Deploy to EC2 via SSM
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
         run: |
-          APP_ID=$(doctl apps list --format ID,Spec.Name --no-header \
-            | awk -v name="$APP_NAME" '$2 == name {print $1}')
-          if [ -z "$APP_ID" ]; then
-            echo "::error::No App Platform app named '$APP_NAME' found."
-            echo "Create it once with: doctl apps create --spec .do/app.yaml"
-            exit 1
-          fi
-          doctl apps create-deployment "$APP_ID" --wait
+          b64() { base64 -w0 "$1"; }
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy ${GITHUB_SHA}" \
+            --parameters "commands=[
+              \"mkdir -p /opt/calgary-transit\",
+              \"echo $(b64 deploy/docker-compose.yml) | base64 -d > /opt/calgary-transit/docker-compose.yml\",
+              \"echo $(b64 deploy/Caddyfile) | base64 -d > /opt/calgary-transit/Caddyfile\",
+              \"echo $(b64 deploy/deploy.sh) | base64 -d > /opt/calgary-transit/deploy.sh\",
+              \"bash /opt/calgary-transit/deploy.sh $IMAGE\"
+            ]" \
+            --query Command.CommandId --output text)
+
+          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" || true
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query '[Status,StandardOutputContent,StandardErrorContent]' --output text
+          STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --query Status --output text)
+          [ "$STATUS" = "Success" ]

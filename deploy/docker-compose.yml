@@ -1,0 +1,35 @@
+# Runs on the EC2 instance (installed to /opt/calgary-transit by bootstrap.sh).
+# Caddy terminates TLS (automatic Let's Encrypt) and proxies to the app container.
+services:
+  app:
+    image: ${IMAGE}
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # GTFS indexes are built at startup
+      start_period: 60s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  caddy_data:
+  caddy_config:

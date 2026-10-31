@@ -1,6 +1,6 @@
 .git/
 .trunk/
-.do/
+deploy/
 .github/
 backend/venv/
 backend/__pycache__/
