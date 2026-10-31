@@ -6,8 +6,6 @@ export interface NavItem {
   isActive?: boolean;
 }
 
-export function fetchETAFromAPI(stopId: string): Promise<number>;
-
 export interface NavSection {
   title: string;
   items: NavItem[];
